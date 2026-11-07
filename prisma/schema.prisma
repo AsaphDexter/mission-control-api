@@ -1,0 +1,476 @@
+// Mission Control API v1.0
+// Source: MC-DBD-001 v1.0 (Issued Database Design Baseline, 4 November 2026)
+// PostgreSQL-specific partial indexes, CHECK constraints and triggers are implemented
+// in reviewed SQL migrations; they are not fully expressible in the Prisma schema.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+
+  @@map("user_status")
+}
+
+enum ContentRevisionStatus {
+  DRAFT
+  PENDING_REVIEW
+  CHANGES_REQUESTED
+  PUBLISHED
+  REJECTED
+  SUPERSEDED
+  ARCHIVED
+
+  @@map("content_revision_status")
+}
+
+enum ReviewDecision {
+  APPROVE
+  REJECT
+  REQUEST_CHANGES
+
+  @@map("review_decision")
+}
+
+enum ChallengeType {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SHORT_ANSWER
+  API_ASSERTION
+  SQL_EXERCISE
+  TEST_CASE_DESIGN
+  TEST_PLAN
+  BUG_REPORT
+  AUTOMATION_ASSIGNMENT
+  EXPLORATORY_REPORT
+
+  @@map("challenge_type")
+}
+
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+
+  @@map("difficulty_level")
+}
+
+enum EvaluationMethod {
+  AUTOMATIC
+  MANUAL
+
+  @@map("evaluation_method")
+}
+
+enum SubmissionStatus {
+  RECEIVED
+  PENDING_REVIEW
+  IN_REVIEW
+  EVALUATED
+
+  @@map("submission_status")
+}
+
+model User {
+  id                String     @id @default(uuid()) @db.Uuid
+  email             String     @unique(map: "uq_users_email") @db.VarChar(254)
+  password_hash     String     @db.VarChar(255)
+  first_name        String     @db.VarChar(100)
+  last_name         String     @db.VarChar(100)
+  display_name      String?    @db.VarChar(100)
+  biography         String?    @db.Text
+  profile_image_url String?    @db.VarChar(2048)
+  status            UserStatus
+  auth_version      Int        @default(1)
+  email_verified_at DateTime?  @db.Timestamptz(6)
+  last_login_at     DateTime?  @db.Timestamptz(6)
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime   @updatedAt @db.Timestamptz(6)
+
+  user_roles                UserRole[]
+  assigned_user_roles       UserRole[]               @relation("UserRoleAssignedBy")
+  revoked_user_roles        UserRole[]               @relation("UserRoleRevokedBy")
+  refresh_tokens            RefreshToken[]
+  email_verification_tokens EmailVerificationToken[]
+  password_reset_tokens     PasswordResetToken[]
+  resources                 Resource[]               @relation("ResourceCreator")
+  resource_revisions        ResourceRevision[]       @relation("ResourceRevisionAuthor")
+  resource_reviews          ResourceReview[]         @relation("ResourceReviewReviewer")
+  challenges                Challenge[]              @relation("ChallengeCreator")
+  challenge_revisions       ChallengeRevision[]      @relation("ChallengeRevisionAuthor")
+  challenge_reviews         ChallengeReview[]        @relation("ChallengeReviewReviewer")
+  challenge_submissions     ChallengeSubmission[]
+  user_challenge_attempts   UserChallengeAttempt[]
+  evaluated_submissions     SubmissionEvaluation[]   @relation("SubmissionEvaluator")
+  audit_logs                AuditLog[]               @relation("AuditActor")
+
+  @@index([status], map: "idx_users_status")
+  @@index([created_at], map: "idx_users_created_at")
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique(map: "uq_roles_code") @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  user_roles       UserRole[]
+  role_permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique(map: "uq_permissions_code") @db.VarChar(120)
+  description String?  @db.Text
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  role_permissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  role_id     String    @db.Uuid
+  assigned_by String?   @db.Uuid
+  assigned_at DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_by  String?   @db.Uuid
+  revoked_at  DateTime? @db.Timestamptz(6)
+
+  user             User  @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  role             Role  @relation(fields: [role_id], references: [id], onDelete: Restrict)
+  assigned_by_user User? @relation("UserRoleAssignedBy", fields: [assigned_by], references: [id], onDelete: Restrict)
+  revoked_by_user  User? @relation("UserRoleRevokedBy", fields: [revoked_by], references: [id], onDelete: Restrict)
+
+  // uq_user_roles_active is a partial unique index created in a custom SQL migration.
+  @@index([role_id], map: "idx_user_roles_role_id")
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id            String   @id @default(uuid()) @db.Uuid
+  role_id       String   @db.Uuid
+  permission_id String   @db.Uuid
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [role_id], references: [id], onDelete: Restrict)
+  permission Permission @relation(fields: [permission_id], references: [id], onDelete: Restrict)
+
+  @@unique([role_id, permission_id], map: "uq_role_permissions_role_permission")
+  @@map("role_permissions")
+}
+
+model RefreshToken {
+  id                    String    @id @default(uuid()) @db.Uuid
+  user_id               String    @db.Uuid
+  token_hash            String    @unique(map: "uq_refresh_tokens_token_hash") @db.Char(64)
+  family_id             String    @db.Uuid
+  auth_version_at_issue Int
+  expires_at            DateTime  @db.Timestamptz(6)
+  revoked_at            DateTime? @db.Timestamptz(6)
+  replaced_by_token_id  String?   @db.Uuid
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  last_used_at          DateTime? @db.Timestamptz(6)
+
+  user        User           @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  replaced_by RefreshToken?  @relation("RefreshTokenReplacement", fields: [replaced_by_token_id], references: [id], onDelete: Restrict)
+  replaces    RefreshToken[] @relation("RefreshTokenReplacement")
+
+  @@index([user_id], map: "idx_refresh_tokens_user_id")
+  @@index([family_id], map: "idx_refresh_tokens_family_id")
+  @@index([expires_at], map: "idx_refresh_tokens_expires_at")
+  @@map("refresh_tokens")
+}
+
+model EmailVerificationToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  token_hash  String    @unique(map: "uq_email_verification_tokens_token_hash") @db.Char(64)
+  expires_at  DateTime  @db.Timestamptz(6)
+  consumed_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  token_hash  String    @unique(map: "uq_password_reset_tokens_token_hash") @db.Char(64)
+  expires_at  DateTime  @db.Timestamptz(6)
+  consumed_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@map("password_reset_tokens")
+}
+
+model ResourceCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(120)
+  slug        String   @unique(map: "uq_resource_categories_slug") @db.VarChar(140)
+  description String?  @db.Text
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @updatedAt @db.Timestamptz(6)
+
+  revisions ResourceRevision[]
+
+  @@map("resource_categories")
+}
+
+model Resource {
+  id          String    @id @default(uuid()) @db.Uuid
+  created_by  String    @db.Uuid
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime  @updatedAt @db.Timestamptz(6)
+  archived_at DateTime? @db.Timestamptz(6)
+
+  creator   User               @relation("ResourceCreator", fields: [created_by], references: [id], onDelete: Restrict)
+  revisions ResourceRevision[]
+
+  @@map("resources")
+}
+
+model ResourceRevision {
+  id              String                @id @default(uuid()) @db.Uuid
+  resource_id     String                @db.Uuid
+  revision_number Int
+  category_id     String                @db.Uuid
+  title           String                @db.VarChar(200)
+  summary         String                @db.VarChar(500)
+  body_markdown   String                @db.Text
+  external_url    String?               @db.VarChar(2048)
+  status          ContentRevisionStatus
+  created_by      String                @db.Uuid
+  submitted_at    DateTime?             @db.Timestamptz(6)
+  published_at    DateTime?             @db.Timestamptz(6)
+  created_at      DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime              @updatedAt @db.Timestamptz(6)
+
+  resource Resource         @relation(fields: [resource_id], references: [id], onDelete: Restrict)
+  category ResourceCategory @relation(fields: [category_id], references: [id], onDelete: Restrict)
+  author   User             @relation("ResourceRevisionAuthor", fields: [created_by], references: [id], onDelete: Restrict)
+  reviews  ResourceReview[]
+
+  @@unique([resource_id, revision_number], map: "uq_resource_revisions_resource_revision")
+  @@index([category_id], map: "idx_resource_revisions_category_id")
+  @@index([status], map: "idx_resource_revisions_status")
+  @@index([published_at], map: "idx_resource_revisions_published_at")
+  // resource_id is the leading column of the composite unique index above.
+  // Published/working revision partial unique indexes are created in SQL migrations.
+  @@map("resource_revisions")
+}
+
+model ResourceReview {
+  id                   String         @id @default(uuid()) @db.Uuid
+  resource_revision_id String         @db.Uuid
+  reviewer_id          String         @db.Uuid
+  decision             ReviewDecision
+  feedback             String?        @db.Text
+  created_at           DateTime       @default(now()) @db.Timestamptz(6)
+
+  revision ResourceRevision @relation(fields: [resource_revision_id], references: [id], onDelete: Restrict)
+  reviewer User             @relation("ResourceReviewReviewer", fields: [reviewer_id], references: [id], onDelete: Restrict)
+
+  @@index([resource_revision_id], map: "idx_resource_reviews_resource_revision_id")
+  @@map("resource_reviews")
+}
+
+model ChallengeCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(120)
+  slug        String   @unique(map: "uq_challenge_categories_slug") @db.VarChar(140)
+  description String?  @db.Text
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @updatedAt @db.Timestamptz(6)
+
+  revisions ChallengeRevision[]
+
+  @@map("challenge_categories")
+}
+
+model Challenge {
+  id          String    @id @default(uuid()) @db.Uuid
+  created_by  String    @db.Uuid
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime  @updatedAt @db.Timestamptz(6)
+  archived_at DateTime? @db.Timestamptz(6)
+
+  creator   User                @relation("ChallengeCreator", fields: [created_by], references: [id], onDelete: Restrict)
+  revisions ChallengeRevision[]
+
+  @@map("challenges")
+}
+
+model ChallengeRevision {
+  id                  String                @id @default(uuid()) @db.Uuid
+  challenge_id        String                @db.Uuid
+  revision_number     Int
+  category_id         String                @db.Uuid
+  title               String                @db.VarChar(200)
+  description         String                @db.Text
+  instructions        String                @db.Text
+  challenge_type      ChallengeType
+  difficulty          DifficultyLevel
+  maximum_score       Decimal               @db.Decimal(8, 2)
+  passing_score       Decimal               @db.Decimal(8, 2)
+  maximum_attempts    Int                   @default(3)
+  learning_objectives Json                  @db.JsonB
+  status              ContentRevisionStatus
+  created_by          String                @db.Uuid
+  submitted_at        DateTime?             @db.Timestamptz(6)
+  published_at        DateTime?             @db.Timestamptz(6)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime              @updatedAt @db.Timestamptz(6)
+
+  challenge         Challenge                  @relation(fields: [challenge_id], references: [id], onDelete: Restrict)
+  category          ChallengeCategory          @relation(fields: [category_id], references: [id], onDelete: Restrict)
+  author            User                       @relation("ChallengeRevisionAuthor", fields: [created_by], references: [id], onDelete: Restrict)
+  evaluation_config ChallengeEvaluationConfig?
+  reviews           ChallengeReview[]
+  submissions       ChallengeSubmission[]
+  user_attempts     UserChallengeAttempt[]
+
+  @@unique([challenge_id, revision_number], map: "uq_challenge_revisions_challenge_revision")
+  @@index([category_id], map: "idx_challenge_revisions_category_id")
+  @@index([status], map: "idx_challenge_revisions_status")
+  @@index([difficulty], map: "idx_challenge_revisions_difficulty")
+  // challenge_id is the leading column of the composite unique index above.
+  // Published/working revision partial unique indexes are created in SQL migrations.
+  @@map("challenge_revisions")
+}
+
+model ChallengeEvaluationConfig {
+  id                    String           @id @default(uuid()) @db.Uuid
+  challenge_revision_id String           @unique(map: "uq_challenge_evaluation_configs_revision") @db.Uuid
+  evaluation_method     EvaluationMethod
+  configuration         Json             @db.JsonB
+  schema_version        Int
+  created_at            DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime         @updatedAt @db.Timestamptz(6)
+
+  challenge_revision ChallengeRevision @relation(fields: [challenge_revision_id], references: [id], onDelete: Restrict)
+
+  @@map("challenge_evaluation_configs")
+}
+
+model ChallengeReview {
+  id                    String         @id @default(uuid()) @db.Uuid
+  challenge_revision_id String         @db.Uuid
+  reviewer_id           String         @db.Uuid
+  decision              ReviewDecision
+  feedback              String?        @db.Text
+  created_at            DateTime       @default(now()) @db.Timestamptz(6)
+
+  revision ChallengeRevision @relation(fields: [challenge_revision_id], references: [id], onDelete: Restrict)
+  reviewer User              @relation("ChallengeReviewReviewer", fields: [reviewer_id], references: [id], onDelete: Restrict)
+
+  @@index([challenge_revision_id], map: "idx_challenge_reviews_challenge_revision_id")
+  @@map("challenge_reviews")
+}
+
+model ChallengeSubmission {
+  id                    String           @id @default(uuid()) @db.Uuid
+  user_id               String           @db.Uuid
+  challenge_revision_id String           @db.Uuid
+  attempt_number        Int
+  idempotency_key       String           @db.VarChar(128)
+  request_hash          String           @db.Char(64)
+  response_payload      Json             @db.JsonB
+  status                SubmissionStatus
+  submitted_at          DateTime         @default(now()) @db.Timestamptz(6)
+  created_at            DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime         @updatedAt @db.Timestamptz(6)
+
+  user               User                   @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  challenge_revision ChallengeRevision      @relation(fields: [challenge_revision_id], references: [id], onDelete: Restrict)
+  evaluations        SubmissionEvaluation[]
+
+  @@unique([user_id, challenge_revision_id, attempt_number], map: "uq_challenge_submissions_user_revision_attempt")
+  @@unique([user_id, idempotency_key], map: "uq_challenge_submissions_user_idempotency")
+  @@index([user_id], map: "idx_challenge_submissions_user_id")
+  @@index([challenge_revision_id], map: "idx_challenge_submissions_revision_id")
+  @@index([status], map: "idx_challenge_submissions_status")
+  @@index([submitted_at], map: "idx_challenge_submissions_submitted_at")
+  @@map("challenge_submissions")
+}
+
+model UserChallengeAttempt {
+  id                    String   @id @default(uuid()) @db.Uuid
+  user_id               String   @db.Uuid
+  challenge_revision_id String   @db.Uuid
+  attempts_used         Int      @default(0)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @updatedAt @db.Timestamptz(6)
+
+  user               User              @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  challenge_revision ChallengeRevision @relation(fields: [challenge_revision_id], references: [id], onDelete: Restrict)
+
+  @@unique([user_id, challenge_revision_id], map: "uq_user_challenge_attempts_user_revision")
+  // The composite unique index covers user_id lookups; the second key is indexed separately.
+  @@index([challenge_revision_id], map: "idx_user_challenge_attempts_revision_id")
+  @@map("user_challenge_attempts")
+}
+
+model SubmissionEvaluation {
+  id                String           @id @default(uuid()) @db.Uuid
+  submission_id     String           @db.Uuid
+  evaluation_number Int
+  evaluation_method EvaluationMethod
+  score             Decimal          @db.Decimal(8, 2)
+  maximum_score     Decimal          @db.Decimal(8, 2)
+  feedback          String?          @db.Text
+  evaluator_id      String?          @db.Uuid
+  is_current        Boolean          @default(true)
+  created_at        DateTime         @default(now()) @db.Timestamptz(6)
+
+  submission ChallengeSubmission @relation(fields: [submission_id], references: [id], onDelete: Restrict)
+  evaluator  User?               @relation("SubmissionEvaluator", fields: [evaluator_id], references: [id], onDelete: Restrict)
+
+  @@unique([submission_id, evaluation_number], map: "uq_submission_evaluations_submission_number")
+  @@index([evaluator_id], map: "idx_submission_evaluations_evaluator_id")
+  @@index([is_current], map: "idx_submission_evaluations_is_current")
+  // uq_submission_current_evaluation is a partial unique index created in a custom SQL migration.
+  @@map("submission_evaluations")
+}
+
+model AuditLog {
+  id                  String   @id @default(uuid()) @db.Uuid
+  actor_user_id       String?  @db.Uuid
+  actor_role_snapshot String?  @db.VarChar(50)
+  action              String   @db.VarChar(120)
+  entity_type         String   @db.VarChar(100)
+  entity_id           String?  @db.Uuid
+  request_id          String?  @db.VarChar(100)
+  before_data         Json?    @db.JsonB
+  after_data          Json?    @db.JsonB
+  metadata            Json?    @db.JsonB
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actor_user_id], references: [id], onDelete: Restrict)
+
+  @@index([actor_user_id], map: "idx_audit_logs_actor_user_id")
+  @@index([entity_type, entity_id], map: "idx_audit_logs_entity")
+  @@index([created_at], map: "idx_audit_logs_created_at")
+  @@map("audit_logs")
+}
