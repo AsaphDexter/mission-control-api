@@ -1,3 +1,4 @@
+
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "typebox";
 
@@ -9,6 +10,15 @@ const readinessResponseSchema = Type.Object({
   status: Type.Literal("ready"),
   checks: Type.Object({
     application: Type.Literal("ready"),
+    database: Type.Literal("ready"),
+  }),
+});
+
+const readinessFailureSchema = Type.Object({
+  status: Type.Literal("not_ready"),
+  checks: Type.Object({
+    application: Type.Literal("ready"),
+    database: Type.Literal("unavailable"),
   }),
 });
 
@@ -33,14 +43,32 @@ export const healthRoutes: FastifyPluginAsyncTypebox = async (app) => {
       schema: {
         response: {
           200: readinessResponseSchema,
+          503: readinessFailureSchema,
         },
       },
     },
-    async () => ({
-      status: "ready" as const,
-      checks: {
-        application: "ready" as const,
-      },
-    }),
+    async (_request, reply) => {
+      try {
+        await app.prisma.$queryRaw`SELECT 1`;
+
+        return {
+          status: "ready" as const,
+          checks: {
+            application: "ready" as const,
+            database: "ready" as const,
+          },
+        };
+      } catch (error) {
+        app.log.error({ err: error }, "Database readiness check failed.");
+
+        return reply.code(503).send({
+          status: "not_ready" as const,
+          checks: {
+            application: "ready" as const,
+            database: "unavailable" as const,
+          },
+        });
+      }
+    },
   );
 };
