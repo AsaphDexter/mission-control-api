@@ -147,3 +147,14 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+
+
+# Prisma generated client
+/src/generated/prisma/
+
+# Local AI coding assistant files
+/.agents/
+/.claude/
+/.windsurf/
+/skills-lock.json
