@@ -466,76 +466,17 @@ CREATE TRIGGER "trg_challenge_revisions_maximum_attempts_guard"
 -- 10. Atomic attempt reservation
 -- -----------------------------------------------------------------------------
 
--- Call this function inside the same Prisma transaction that creates the
--- challenge_submissions row. Check the idempotency key/request hash before
--- calling it so a duplicate request does not consume another attempt.
-CREATE OR REPLACE FUNCTION public.reserve_challenge_attempt(
-    p_user_id UUID,
-    p_challenge_revision_id UUID
-)
-RETURNS INTEGER
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_maximum_attempts INTEGER;
-    v_revision_status "content_revision_status";
-    v_reserved_attempt INTEGER;
-BEGIN
-    SELECT "maximum_attempts", "status"
-      INTO v_maximum_attempts, v_revision_status
-      FROM "challenge_revisions"
-     WHERE "id" = p_challenge_revision_id
-     FOR SHARE;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Challenge revision does not exist.'
-            USING ERRCODE = '23503';
-    END IF;
-
-    IF v_revision_status <> 'PUBLISHED' THEN
-        RAISE EXCEPTION 'Challenge revision is not currently published.'
-            USING ERRCODE = '23514';
-    END IF;
-
-    INSERT INTO "user_challenge_attempts" (
-        "id",
-        "user_id",
-        "challenge_revision_id",
-        "attempts_used",
-        "created_at",
-        "updated_at"
-    )
-    VALUES (
-        gen_random_uuid(),
-        p_user_id,
-        p_challenge_revision_id,
-        0,
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-    )
-    ON CONFLICT ("user_id", "challenge_revision_id") DO NOTHING;
-
-    UPDATE "user_challenge_attempts"
-       SET "attempts_used" = "attempts_used" + 1,
-           "updated_at" = CURRENT_TIMESTAMP
-     WHERE "user_id" = p_user_id
-       AND "challenge_revision_id" = p_challenge_revision_id
-       AND "attempts_used" < v_maximum_attempts
-    RETURNING "attempts_used" INTO v_reserved_attempt;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'CHALLENGE_ATTEMPT_LIMIT_REACHED'
-            USING ERRCODE = 'P0001';
-    END IF;
-
-    RETURN v_reserved_attempt;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.reserve_challenge_attempt(UUID, UUID) FROM PUBLIC;
-
-COMMENT ON FUNCTION public.reserve_challenge_attempt(UUID, UUID) IS
-    'Atomically reserves the next attempt for a published challenge revision. Call inside the same transaction as submission creation; perform idempotency checks first. Grant EXECUTE to the runtime database principal after it has been provisioned.';
+-- Implemented in the application service within a PostgreSQL transaction.
+--
+-- The application must:
+-- 1. Check the idempotency key and request hash.
+-- 2. Create the attempt-counter row if it does not exist.
+-- 3. Atomically increment attempts_used only when below maximum_attempts.
+-- 4. Create the challenge submission in the same transaction.
+-- 5. Roll back the counter increment if submission creation fails.
+--
+-- The database trigger trg_user_challenge_attempts_limit independently
+-- enforces the maximum-attempt limit.
 
 -- Approved audit anonymisation/retention remains a separately privileged
 -- maintenance procedure. Ordinary UPDATE and DELETE operations are blocked by
