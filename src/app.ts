@@ -3,6 +3,7 @@ import Fastify, { type FastifyServerOptions } from "fastify";
 import type { PrismaClient } from "./generated/prisma/client.js";
 import { healthRoutes } from "./modules/health/health.routes.js";
 import { registerDatabase } from "./plugins/database.plugin.js";
+import { authRoutes } from "./modules/auth/auth.routes.js";
 
 type AppOptions = Pick<FastifyServerOptions, "logger"> & {
   prisma: PrismaClient;
@@ -20,6 +21,8 @@ export function buildApp(options: AppOptions) {
 
   registerDatabase(app, prisma);
   app.register(healthRoutes);
+  app.register(authRoutes);
 
-  return app;
+return app;
+
 }
