@@ -12,6 +12,8 @@ import {
   verifyEmailAddress,
 } from "./email-verification.service.js";
 
+import { resendVerificationEmail } from "./resend-verification.service.js";
+
 function errorResponse(
   requestId: string,
   code: string,
@@ -297,4 +299,86 @@ export async function authRoutes(
       }
     },
   );
+
+  app.post<{ Body: { email: string } }>(
+  "/api/v1/auth/resend-verification",
+  {
+    schema: {
+      body: {
+        type: "object",
+        additionalProperties: false,
+        required: ["email"],
+        properties: {
+          email: {
+            type: "string",
+            format: "email",
+            maxLength: 254,
+          },
+        },
+      },
+    },
+    attachValidation: true,
+  },
+  async (request, reply) => {
+    const email = (
+      request.body as { email?: unknown } | undefined
+    )?.email;
+
+    if (
+      request.validationError ||
+      typeof email !== "string" ||
+      email.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ) {
+      return reply.code(400).send(
+        errorResponse(
+          request.id,
+          "VALIDATION_ERROR",
+          "A valid email address is required.",
+        ),
+      );
+    }
+
+    try {
+      const result = await resendVerificationEmail(email, {
+        prisma: app.prisma,
+      });
+
+      if (
+        result.delivery === "failed" ||
+        result.delivery === "not_configured"
+      ) {
+        request.log.warn(
+          { userId: result.userId, delivery: result.delivery },
+          "Verification email was not delivered.",
+        );
+      }
+
+      // Deliberately identical for registered, unregistered,
+      // verified and pending accounts.
+      return reply.code(202).send({
+        data: {
+          message:
+            "If the address is eligible for verification, a verification message will be sent.",
+        },
+        meta: {
+          requestId: request.id,
+        },
+      });
+    } catch (error) {
+      request.log.error(
+        { err: error },
+        "Resending email verification failed.",
+      );
+
+      return reply.code(500).send(
+        errorResponse(
+          request.id,
+          "INTERNAL_SERVER_ERROR",
+          "An unexpected error occurred while processing the request.",
+        ),
+      );
+    }
+  },
+);
 }
