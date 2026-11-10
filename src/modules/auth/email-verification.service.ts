@@ -28,22 +28,21 @@ export async function verifyEmailAddress(
   const tokenHash = hashOpaqueToken(token);
 
   await dependencies.prisma.$transaction(async (transaction) => {
-    const storedToken =
-      await transaction.emailVerificationToken.findUnique({
-        where: { token_hash: tokenHash },
-        select: {
-          id: true,
-          user_id: true,
-          expires_at: true,
-          consumed_at: true,
-          user: {
-            select: {
-              status: true,
-              email_verified_at: true,
-            },
+    const storedToken = await transaction.emailVerificationToken.findUnique({
+      where: { token_hash: tokenHash },
+      select: {
+        id: true,
+        user_id: true,
+        expires_at: true,
+        consumed_at: true,
+        user: {
+          select: {
+            status: true,
+            email_verified_at: true,
           },
         },
-      });
+      },
+    });
 
     if (!storedToken) {
       throw new VerificationTokenNotFoundError();
@@ -58,17 +57,16 @@ export async function verifyEmailAddress(
       throw new VerificationTokenConflictError();
     }
 
-    const consumedToken =
-      await transaction.emailVerificationToken.updateMany({
-        where: {
-          id: storedToken.id,
-          consumed_at: null,
-          expires_at: { gt: currentTime },
-        },
-        data: {
-          consumed_at: currentTime,
-        },
-      });
+    const consumedToken = await transaction.emailVerificationToken.updateMany({
+      where: {
+        id: storedToken.id,
+        consumed_at: null,
+        expires_at: { gt: currentTime },
+      },
+      data: {
+        consumed_at: currentTime,
+      },
+    });
 
     if (consumedToken.count !== 1) {
       throw new VerificationTokenConflictError();

@@ -1,9 +1,6 @@
 import type { PrismaClient } from "../../generated/prisma/client.js";
 import { hashPassword } from "./security/password.js";
-import {
-  generateOpaqueToken,
-  hashOpaqueToken,
-} from "./security/opaque-token.js";
+import { generateOpaqueToken, hashOpaqueToken } from "./security/opaque-token.js";
 
 const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -21,9 +18,7 @@ export interface VerificationEmailMessage {
   token: string;
 }
 
-export type VerificationEmailSender = (
-  message: VerificationEmailMessage,
-) => Promise<void>;
+export type VerificationEmailSender = (message: VerificationEmailMessage) => Promise<void>;
 
 export interface RegistrationDependencies {
   prisma: PrismaClient;
@@ -62,12 +57,7 @@ export interface RegistrationResult {
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "P2002"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
 export async function registerLearner(
@@ -145,9 +135,7 @@ export async function registerLearner(
         data: {
           user_id: user.id,
           token_hash: hashOpaqueToken(verificationToken),
-          expires_at: new Date(
-            registrationTime.getTime() + VERIFICATION_TOKEN_TTL_MS,
-          ),
+          expires_at: new Date(registrationTime.getTime() + VERIFICATION_TOKEN_TTL_MS),
         },
       });
 
@@ -161,8 +149,7 @@ export async function registerLearner(
     throw error;
   }
 
-  let emailDelivery: RegistrationResult["emailDelivery"] =
-    "not_configured";
+  let emailDelivery: RegistrationResult["emailDelivery"] = "not_configured";
 
   if (sendVerificationEmail) {
     try {
@@ -188,9 +175,7 @@ export async function registerLearner(
       status: createdUser.status,
       emailVerified: createdUser.email_verified_at !== null,
       createdAt: createdUser.created_at.toISOString(),
-      roles: createdUser.user_roles.map(
-        (userRole) => userRole.role.code,
-      ),
+      roles: createdUser.user_roles.map((userRole) => userRole.role.code),
     },
     emailVerificationRequired: true,
     emailDelivery,

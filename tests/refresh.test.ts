@@ -1,13 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/app.js";
@@ -36,9 +27,8 @@ const transactionClient = {
 };
 
 const runTransaction = vi.fn(
-  async (
-    callback: (transaction: typeof transactionClient) => Promise<unknown>,
-  ) => callback(transactionClient),
+  async (callback: (transaction: typeof transactionClient) => Promise<unknown>) =>
+    callback(transactionClient),
 );
 
 const prismaMock = {
@@ -86,10 +76,7 @@ describe("POST /api/v1/auth/refresh", () => {
   beforeAll(() => {
     previousJwtSecret = process.env.JWT_ACCESS_SECRET;
 
-    process.env.JWT_ACCESS_SECRET = Buffer.alloc(
-      32,
-      0x52,
-    ).toString("base64url");
+    process.env.JWT_ACCESS_SECRET = Buffer.alloc(32, 0x52).toString("base64url");
   });
 
   afterAll(() => {
@@ -115,9 +102,7 @@ describe("POST /api/v1/auth/refresh", () => {
     incrementUserAuthVersion.mockReset().mockResolvedValue({});
     disconnect.mockReset().mockResolvedValue(undefined);
 
-    runTransaction.mockReset().mockImplementation(
-      async (callback) => callback(transactionClient),
-    );
+    runTransaction.mockReset().mockImplementation(async (callback) => callback(transactionClient));
 
     app = buildApp({
       logger: false,
@@ -216,9 +201,7 @@ describe("POST /api/v1/auth/refresh", () => {
     });
 
     expect(response.statusCode).toBe(401);
-    expect(response.json().error.code).toBe(
-      "INVALID_REFRESH_TOKEN",
-    );
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
 
     expect(createNewRefreshToken).not.toHaveBeenCalled();
     expect(incrementUserAuthVersion).not.toHaveBeenCalled();
@@ -239,9 +222,7 @@ describe("POST /api/v1/auth/refresh", () => {
     });
 
     expect(response.statusCode).toBe(401);
-    expect(response.json().error.code).toBe(
-      "INVALID_REFRESH_TOKEN",
-    );
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
 
     expect(updateRefreshTokenMany).not.toHaveBeenCalled();
     expect(createNewRefreshToken).not.toHaveBeenCalled();
@@ -265,9 +246,7 @@ describe("POST /api/v1/auth/refresh", () => {
     });
 
     expect(response.statusCode).toBe(401);
-    expect(response.json().error.code).toBe(
-      "INVALID_REFRESH_TOKEN",
-    );
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
 
     expect(createNewRefreshToken).not.toHaveBeenCalled();
   });
@@ -292,9 +271,7 @@ describe("POST /api/v1/auth/refresh", () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.json().error.code).toBe(
-      "REFRESH_TOKEN_REUSE_DETECTED",
-    );
+    expect(response.json().error.code).toBe("REFRESH_TOKEN_REUSE_DETECTED");
 
     expect(updateRefreshTokenMany).toHaveBeenCalledWith({
       where: {
@@ -322,16 +299,12 @@ describe("POST /api/v1/auth/refresh", () => {
   });
 
   it("detects concurrent reuse after another request claims the token", async () => {
-    findStoredToken
-      .mockResolvedValueOnce(activeStoredToken())
-      .mockResolvedValueOnce({
-        revoked_at: new Date(),
-        replaced_by_token_id: "concurrent-replacement-id",
-      });
+    findStoredToken.mockResolvedValueOnce(activeStoredToken()).mockResolvedValueOnce({
+      revoked_at: new Date(),
+      replaced_by_token_id: "concurrent-replacement-id",
+    });
 
-    updateRefreshTokenMany
-      .mockResolvedValueOnce({ count: 0 })
-      .mockResolvedValueOnce({ count: 2 });
+    updateRefreshTokenMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 2 });
 
     const response = await app.inject({
       method: "POST",
@@ -342,9 +315,7 @@ describe("POST /api/v1/auth/refresh", () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.json().error.code).toBe(
-      "REFRESH_TOKEN_REUSE_DETECTED",
-    );
+    expect(response.json().error.code).toBe("REFRESH_TOKEN_REUSE_DETECTED");
 
     expect(findStoredToken).toHaveBeenCalledTimes(2);
     expect(incrementUserAuthVersion).toHaveBeenCalledOnce();

@@ -1,4 +1,3 @@
-
 import { getPrismaClient } from "./lib/prisma.js";
 import { buildApp } from "./app.js";
 

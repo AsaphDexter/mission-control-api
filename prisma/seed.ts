@@ -1,4 +1,3 @@
-
 import { getPrismaClient } from "../src/lib/prisma.js";
 
 const prisma = getPrismaClient();
@@ -43,9 +42,7 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch {
-  console.error(
-    "Role seeding failed. Check database connectivity and configuration.",
-  );
+  console.error("Role seeding failed. Check database connectivity and configuration.");
   process.exitCode = 1;
 } finally {
   await prisma.$disconnect();

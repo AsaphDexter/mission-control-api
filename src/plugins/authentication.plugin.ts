@@ -1,8 +1,4 @@
-import type {
-  FastifyInstance,
-  FastifyReply,
-  FastifyRequest,
-} from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import {
   AccessTokenConfigurationError,
@@ -25,10 +21,7 @@ declare module "fastify" {
   }
 
   interface FastifyInstance {
-    authenticate: (
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) => Promise<void>;
+    authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
@@ -48,35 +41,28 @@ function sendAuthenticationError(
   });
 }
 
-export function registerAuthentication(
-  app: FastifyInstance,
-): void {
+export function registerAuthentication(app: FastifyInstance): void {
   app.decorateRequest("authenticatedUser", null);
 
   app.decorate(
     "authenticate",
-    async (
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ): Promise<void> => {
+    async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
       const authorization = request.headers.authorization;
 
-      const match = authorization
-        ? /^Bearer\s+(\S+)$/i.exec(authorization)
-        : null;
+      const match = authorization ? /^Bearer\s+(\S+)$/i.exec(authorization) : null;
 
-const accessToken = match?.[1];
+      const accessToken = match?.[1];
 
-if (!accessToken) {
-  sendAuthenticationError(
-    reply,
-    request.id,
-    401,
-    "UNAUTHENTICATED",
-    "A valid bearer access token is required.",
-  );
-  return;
-}
+      if (!accessToken) {
+        sendAuthenticationError(
+          reply,
+          request.id,
+          401,
+          "UNAUTHENTICATED",
+          "A valid bearer access token is required.",
+        );
+        return;
+      }
 
       let claims;
 
@@ -84,10 +70,7 @@ if (!accessToken) {
         claims = await verifyAccessToken(accessToken);
       } catch (error) {
         if (error instanceof AccessTokenConfigurationError) {
-          request.log.error(
-            { err: error },
-            "Access-token configuration is invalid.",
-          );
+          request.log.error({ err: error }, "Access-token configuration is invalid.");
 
           sendAuthenticationError(
             reply,
@@ -140,10 +123,7 @@ if (!accessToken) {
           },
         });
       } catch (error) {
-        request.log.error(
-          { err: error },
-          "Could not validate the authenticated account.",
-        );
+        request.log.error({ err: error }, "Could not validate the authenticated account.");
 
         sendAuthenticationError(
           reply,
@@ -178,9 +158,7 @@ if (!accessToken) {
         lastName: user.last_name,
         displayName: user.display_name,
         authVersion: user.auth_version,
-        roles: user.user_roles.map(
-          (userRole) => userRole.role.code,
-        ),
+        roles: user.user_roles.map((userRole) => userRole.role.code),
       };
     },
   );

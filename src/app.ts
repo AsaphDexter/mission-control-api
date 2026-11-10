@@ -1,4 +1,3 @@
-
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { PrismaClient } from "./generated/prisma/client.js";
 import { healthRoutes } from "./modules/health/health.routes.js";
@@ -20,12 +19,11 @@ export function buildApp(options: AppOptions) {
     ...fastifyOptions,
   });
 
-registerDatabase(app, prisma);
-registerAuthentication(app);
+  registerDatabase(app, prisma);
+  registerAuthentication(app);
 
-app.register(healthRoutes);
-app.register(authRoutes);
+  app.register(healthRoutes);
+  app.register(authRoutes);
 
-return app;
-
+  return app;
 }

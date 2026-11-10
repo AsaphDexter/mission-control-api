@@ -1,23 +1,10 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/app.js";
 import { hashOpaqueToken } from "../src/modules/auth/security/opaque-token.js";
-import {
-  hashPassword,
-} from "../src/modules/auth/security/password.js";
-import {
-  verifyAccessToken,
-} from "../src/modules/auth/security/access-token.js";
+import { hashPassword } from "../src/modules/auth/security/password.js";
+import { verifyAccessToken } from "../src/modules/auth/security/access-token.js";
 
 const LOGIN_PASSWORD = "CorrectHorseBatteryStaple_2026!";
 const LOGIN_EMAIL = "amina@example.com";
@@ -37,9 +24,8 @@ const transactionClient = {
 };
 
 const runTransaction = vi.fn(
-  async (
-    callback: (transaction: typeof transactionClient) => Promise<unknown>,
-  ) => callback(transactionClient),
+  async (callback: (transaction: typeof transactionClient) => Promise<unknown>) =>
+    callback(transactionClient),
 );
 
 const prismaMock = {
@@ -78,10 +64,7 @@ describe("POST /api/v1/auth/login", () => {
   beforeAll(async () => {
     previousJwtSecret = process.env.JWT_ACCESS_SECRET;
 
-    process.env.JWT_ACCESS_SECRET = Buffer.alloc(
-      32,
-      0x42,
-    ).toString("base64url");
+    process.env.JWT_ACCESS_SECRET = Buffer.alloc(32, 0x42).toString("base64url");
 
     activeUser.password_hash = await hashPassword(LOGIN_PASSWORD);
   });
@@ -107,9 +90,7 @@ describe("POST /api/v1/auth/login", () => {
 
     disconnect.mockReset().mockResolvedValue(undefined);
 
-    runTransaction.mockReset().mockImplementation(
-      async (callback) => callback(transactionClient),
-    );
+    runTransaction.mockReset().mockImplementation(async (callback) => callback(transactionClient));
 
     app = buildApp({
       logger: false,
@@ -163,13 +144,9 @@ describe("POST /api/v1/auth/login", () => {
     // Confirm the refresh-token hash, not the raw token, is persisted.
     const savedSession = createRefreshToken.mock.calls[0]?.[0];
 
-    expect(savedSession.data.token_hash).toBe(
-      hashOpaqueToken(body.data.refreshToken),
-    );
+    expect(savedSession.data.token_hash).toBe(hashOpaqueToken(body.data.refreshToken));
 
-    expect(savedSession.data.token_hash).not.toBe(
-      body.data.refreshToken,
-    );
+    expect(savedSession.data.token_hash).not.toBe(body.data.refreshToken);
 
     expect(savedSession.data.family_id).toBeTruthy();
     expect(savedSession.data.auth_version_at_issue).toBe(1);
@@ -198,9 +175,7 @@ describe("POST /api/v1/auth/login", () => {
 
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe("INVALID_CREDENTIALS");
-    expect(response.json().error.message).toBe(
-      "Email or password is incorrect.",
-    );
+    expect(response.json().error.message).toBe("Email or password is incorrect.");
 
     expect(runTransaction).not.toHaveBeenCalled();
   });
@@ -219,9 +194,7 @@ describe("POST /api/v1/auth/login", () => {
 
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe("INVALID_CREDENTIALS");
-    expect(response.json().error.message).toBe(
-      "Email or password is incorrect.",
-    );
+    expect(response.json().error.message).toBe("Email or password is incorrect.");
 
     expect(runTransaction).not.toHaveBeenCalled();
   });

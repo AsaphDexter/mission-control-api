@@ -5,7 +5,5 @@ export function generateOpaqueToken(): string {
 }
 
 export function hashOpaqueToken(token: string): string {
-  return createHash("sha256")
-    .update(token, "utf8")
-    .digest("hex");
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }

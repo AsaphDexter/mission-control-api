@@ -22,26 +22,18 @@ export class PasswordPolicyError extends Error {
 export function assertPasswordPolicy(password: string): void {
   const length = Array.from(password).length;
 
-  if (
-    length < PASSWORD_MIN_LENGTH ||
-    length > PASSWORD_MAX_LENGTH
-  ) {
+  if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH) {
     throw new PasswordPolicyError();
   }
 }
 
-export async function hashPassword(
-  password: string,
-): Promise<string> {
+export async function hashPassword(password: string): Promise<string> {
   assertPasswordPolicy(password);
 
   return hash(password, PASSWORD_HASH_OPTIONS);
 }
 
-export async function verifyPassword(
-  password: string,
-  passwordHash: string,
-): Promise<boolean> {
+export async function verifyPassword(password: string, passwordHash: string): Promise<boolean> {
   if (!password || !passwordHash) {
     return false;
   }

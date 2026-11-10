@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/app.js";
@@ -27,9 +20,8 @@ const transactionClient = {
 };
 
 const runTransaction = vi.fn(
-  async (
-    callback: (transaction: typeof transactionClient) => Promise<unknown>,
-  ) => callback(transactionClient),
+  async (callback: (transaction: typeof transactionClient) => Promise<unknown>) =>
+    callback(transactionClient),
 );
 
 const prismaMock = {
@@ -42,17 +34,18 @@ const prismaMock = {
 
 const verificationToken = "A".repeat(43);
 
-function makeStoredToken(overrides: {
-  expiresAt?: Date;
-  consumedAt?: Date | null;
-  status?: string;
-  emailVerifiedAt?: Date | null;
-} = {}) {
+function makeStoredToken(
+  overrides: {
+    expiresAt?: Date;
+    consumedAt?: Date | null;
+    status?: string;
+    emailVerifiedAt?: Date | null;
+  } = {},
+) {
   return {
     id: "verification-token-id",
     user_id: "test-user-id",
-    expires_at:
-      overrides.expiresAt ?? new Date(Date.now() + 60_000),
+    expires_at: overrides.expiresAt ?? new Date(Date.now() + 60_000),
     consumed_at: overrides.consumedAt ?? null,
     user: {
       status: overrides.status ?? "PENDING_VERIFICATION",
@@ -65,23 +58,15 @@ describe("POST /api/v1/auth/verify-email", () => {
   let app: ReturnType<typeof buildApp>;
 
   beforeEach(() => {
-    findVerificationToken
-      .mockReset()
-      .mockResolvedValue(makeStoredToken());
+    findVerificationToken.mockReset().mockResolvedValue(makeStoredToken());
 
-    consumeVerificationToken
-      .mockReset()
-      .mockResolvedValue({ count: 1 });
+    consumeVerificationToken.mockReset().mockResolvedValue({ count: 1 });
 
-    activateUser
-      .mockReset()
-      .mockResolvedValue({ count: 1 });
+    activateUser.mockReset().mockResolvedValue({ count: 1 });
 
     disconnect.mockReset().mockResolvedValue(undefined);
 
-    runTransaction.mockReset().mockImplementation(
-      async (callback) => callback(transactionClient),
-    );
+    runTransaction.mockReset().mockImplementation(async (callback) => callback(transactionClient));
 
     app = buildApp({
       logger: false,
@@ -101,9 +86,7 @@ describe("POST /api/v1/auth/verify-email", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data.message).toContain(
-      "verified successfully",
-    );
+    expect(response.json().data.message).toContain("verified successfully");
 
     expect(findVerificationToken).toHaveBeenCalledWith({
       where: {
@@ -144,9 +127,7 @@ describe("POST /api/v1/auth/verify-email", () => {
     });
 
     expect(response.statusCode).toBe(404);
-    expect(response.json().error.code).toBe(
-      "VERIFICATION_TOKEN_NOT_FOUND",
-    );
+    expect(response.json().error.code).toBe("VERIFICATION_TOKEN_NOT_FOUND");
 
     expect(consumeVerificationToken).not.toHaveBeenCalled();
     expect(activateUser).not.toHaveBeenCalled();
@@ -166,9 +147,7 @@ describe("POST /api/v1/auth/verify-email", () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.json().error.code).toBe(
-    "VERIFICATION_TOKEN_CONFLICT",
-   );
+    expect(response.json().error.code).toBe("VERIFICATION_TOKEN_CONFLICT");
 
     expect(activateUser).not.toHaveBeenCalled();
   });

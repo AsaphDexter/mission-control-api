@@ -14,11 +14,7 @@ import {
 
 import { resendVerificationEmail } from "./resend-verification.service.js";
 
-import {
-  InvalidCredentialsError,
-  loginUser,
-  type LoginInput,
-} from "./login.service.js";
+import { InvalidCredentialsError, loginUser, type LoginInput } from "./login.service.js";
 
 import {
   InvalidRefreshTokenError,
@@ -27,11 +23,7 @@ import {
   type RefreshInput,
 } from "./refresh.service.js";
 
-function errorResponse(
-  requestId: string,
-  code: string,
-  message: string,
-) {
+function errorResponse(requestId: string, code: string, message: string) {
   return {
     error: {
       code,
@@ -88,12 +80,7 @@ const registrationSchema = {
                 displayName: { type: ["string", "null"] },
                 status: {
                   type: "string",
-                  enum: [
-                    "PENDING_VERIFICATION",
-                    "ACTIVE",
-                    "SUSPENDED",
-                    "DEACTIVATED",
-                  ],
+                  enum: ["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED", "DEACTIVATED"],
                 },
                 emailVerified: { type: "boolean" },
                 createdAt: { type: "string" },
@@ -159,9 +146,7 @@ const verifyEmailSchema = {
   },
 } as const;
 
-export async function authRoutes(
-  app: FastifyInstance,
-): Promise<void> {
+export async function authRoutes(app: FastifyInstance): Promise<void> {
   // 1. Existing Registration Route
   app.post<{ Body: RegistrationInput }>(
     "/api/v1/auth/register",
@@ -171,13 +156,15 @@ export async function authRoutes(
     },
     async (request, reply) => {
       if (request.validationError) {
-        return reply.code(400).send(
-          errorResponse(
-            request.id,
-            "VALIDATION_ERROR",
-            "The registration request contains invalid or missing fields.",
-          ),
-        );
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              request.id,
+              "VALIDATION_ERROR",
+              "The registration request contains invalid or missing fields.",
+            ),
+          );
       }
 
       try {
@@ -195,8 +182,7 @@ export async function authRoutes(
         return reply.code(201).send({
           data: {
             user: result.user,
-            emailVerificationRequired:
-              result.emailVerificationRequired,
+            emailVerificationRequired: result.emailVerificationRequired,
           },
           meta: {
             requestId: request.id,
@@ -204,36 +190,36 @@ export async function authRoutes(
         });
       } catch (error) {
         if (error instanceof EmailAlreadyRegisteredError) {
-          return reply.code(409).send(
-            errorResponse(
-              request.id,
-              "EMAIL_ALREADY_REGISTERED",
-              error.message,
-            ),
-          );
+          return reply
+            .code(409)
+            .send(errorResponse(request.id, "EMAIL_ALREADY_REGISTERED", error.message));
         }
 
         if (error instanceof LearnerRoleNotConfiguredError) {
           request.log.error({ err: error }, "Registration role is missing.");
 
-          return reply.code(503).send(
-            errorResponse(
-              request.id,
-              "SERVICE_UNAVAILABLE",
-              "Registration is temporarily unavailable. Please try again later.",
-            ),
-          );
+          return reply
+            .code(503)
+            .send(
+              errorResponse(
+                request.id,
+                "SERVICE_UNAVAILABLE",
+                "Registration is temporarily unavailable. Please try again later.",
+              ),
+            );
         }
 
         request.log.error({ err: error }, "Registration failed.");
 
-        return reply.code(500).send(
-          errorResponse(
-            request.id,
-            "INTERNAL_SERVER_ERROR",
-            "An unexpected error occurred while creating the account.",
-          ),
-        );
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while creating the account.",
+            ),
+          );
       }
     },
   );
@@ -246,9 +232,7 @@ export async function authRoutes(
       attachValidation: true,
     },
     async (request, reply) => {
-      const token = (
-        request.body as { token?: unknown } | undefined
-      )?.token;
+      const token = (request.body as { token?: unknown } | undefined)?.token;
 
       if (
         request.validationError ||
@@ -256,13 +240,15 @@ export async function authRoutes(
         token.length < 32 ||
         token.length > 512
       ) {
-        return reply.code(400).send(
-          errorResponse(
-            request.id,
-            "VALIDATION_ERROR",
-            "A valid email verification token is required.",
-          ),
-        );
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              request.id,
+              "VALIDATION_ERROR",
+              "A valid email verification token is required.",
+            ),
+          );
       }
 
       try {
@@ -272,8 +258,7 @@ export async function authRoutes(
 
         return reply.code(200).send({
           data: {
-            message:
-              "Email address verified successfully. Your account is now active.",
+            message: "Email address verified successfully. Your account is now active.",
           },
           meta: {
             requestId: request.id,
@@ -281,280 +266,259 @@ export async function authRoutes(
         });
       } catch (error) {
         if (error instanceof VerificationTokenNotFoundError) {
-          return reply.code(404).send(
-            errorResponse(
-              request.id,
-              "VERIFICATION_TOKEN_NOT_FOUND",
-              error.message,
-            ),
-          );
+          return reply
+            .code(404)
+            .send(errorResponse(request.id, "VERIFICATION_TOKEN_NOT_FOUND", error.message));
         }
 
         if (error instanceof VerificationTokenConflictError) {
-          return reply.code(409).send(
-            errorResponse(
-              request.id,
-              "VERIFICATION_TOKEN_CONFLICT",
-              error.message,
-            ),
-          );
+          return reply
+            .code(409)
+            .send(errorResponse(request.id, "VERIFICATION_TOKEN_CONFLICT", error.message));
         }
 
         request.log.error({ err: error }, "Email verification failed.");
 
-        return reply.code(500).send(
-          errorResponse(
-            request.id,
-            "INTERNAL_SERVER_ERROR",
-            "An unexpected error occurred while verifying the email address.",
-          ),
-        );
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while verifying the email address.",
+            ),
+          );
       }
     },
   );
 
   app.post<{ Body: { email: string } }>(
-  "/api/v1/auth/resend-verification",
-  {
-    schema: {
-      body: {
-        type: "object",
-        additionalProperties: false,
-        required: ["email"],
-        properties: {
-          email: {
-            type: "string",
-            format: "email",
-            maxLength: 254,
+    "/api/v1/auth/resend-verification",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["email"],
+          properties: {
+            email: {
+              type: "string",
+              format: "email",
+              maxLength: 254,
+            },
           },
         },
       },
+      attachValidation: true,
     },
-    attachValidation: true,
-  },
-  async (request, reply) => {
-    const email = (
-      request.body as { email?: unknown } | undefined
-    )?.email;
-
-    if (
-      request.validationError ||
-      typeof email !== "string" ||
-      email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-    ) {
-      return reply.code(400).send(
-        errorResponse(
-          request.id,
-          "VALIDATION_ERROR",
-          "A valid email address is required.",
-        ),
-      );
-    }
-
-    try {
-      const result = await resendVerificationEmail(email, {
-        prisma: app.prisma,
-      });
+    async (request, reply) => {
+      const email = (request.body as { email?: unknown } | undefined)?.email;
 
       if (
-        result.delivery === "failed" ||
-        result.delivery === "not_configured"
+        request.validationError ||
+        typeof email !== "string" ||
+        email.length > 254 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
       ) {
-        request.log.warn(
-          { userId: result.userId, delivery: result.delivery },
-          "Verification email was not delivered.",
-        );
+        return reply
+          .code(400)
+          .send(
+            errorResponse(request.id, "VALIDATION_ERROR", "A valid email address is required."),
+          );
       }
 
-      // Deliberately identical for registered, unregistered,
-      // verified and pending accounts.
-      return reply.code(202).send({
-        data: {
-          message:
-            "If the address is eligible for verification, a verification message will be sent.",
-        },
-        meta: {
-          requestId: request.id,
-        },
-      });
-    } catch (error) {
-      request.log.error(
-        { err: error },
-        "Resending email verification failed.",
-      );
+      try {
+        const result = await resendVerificationEmail(email, {
+          prisma: app.prisma,
+        });
 
-      return reply.code(500).send(
-        errorResponse(
-          request.id,
-          "INTERNAL_SERVER_ERROR",
-          "An unexpected error occurred while processing the request.",
-        ),
-      );
-    }
-  },
-);
+        if (result.delivery === "failed" || result.delivery === "not_configured") {
+          request.log.warn(
+            { userId: result.userId, delivery: result.delivery },
+            "Verification email was not delivered.",
+          );
+        }
 
-
-app.post<{ Body: LoginInput }>(
-  "/api/v1/auth/login",
-  {
-    schema: {
-      body: {
-        type: "object",
-        additionalProperties: false,
-        required: ["email", "password"],
-        properties: {
-          email: {
-            type: "string",
-            format: "email",
-            maxLength: 254,
+        // Deliberately identical for registered, unregistered,
+        // verified and pending accounts.
+        return reply.code(202).send({
+          data: {
+            message:
+              "If the address is eligible for verification, a verification message will be sent.",
           },
-          password: {
-            type: "string",
-            minLength: 1,
-            maxLength: 128,
+          meta: {
+            requestId: request.id,
+          },
+        });
+      } catch (error) {
+        request.log.error({ err: error }, "Resending email verification failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while processing the request.",
+            ),
+          );
+      }
+    },
+  );
+
+  app.post<{ Body: LoginInput }>(
+    "/api/v1/auth/login",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["email", "password"],
+          properties: {
+            email: {
+              type: "string",
+              format: "email",
+              maxLength: 254,
+            },
+            password: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+            },
           },
         },
       },
+      attachValidation: true,
     },
-    attachValidation: true,
-  },
-  async (request, reply) => {
-    if (request.validationError) {
-      return reply.code(400).send(
-        errorResponse(
-          request.id,
-          "VALIDATION_ERROR",
-          "A valid email address and password are required.",
-        ),
-      );
-    }
-
-    try {
-      const result = await loginUser(request.body, {
-        prisma: app.prisma,
-      });
-
-      return reply.code(200).send({
-        data: result,
-        meta: {
-          requestId: request.id,
-        },
-      });
-    } catch (error) {
-      if (error instanceof InvalidCredentialsError) {
-        return reply.code(401).send(
-          errorResponse(
-            request.id,
-            "INVALID_CREDENTIALS",
-            "Email or password is incorrect.",
-          ),
-        );
+    async (request, reply) => {
+      if (request.validationError) {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              request.id,
+              "VALIDATION_ERROR",
+              "A valid email address and password are required.",
+            ),
+          );
       }
 
-      request.log.error(
-        { err: error },
-        "Login failed.",
-      );
+      try {
+        const result = await loginUser(request.body, {
+          prisma: app.prisma,
+        });
 
-      return reply.code(500).send(
-        errorResponse(
-          request.id,
-          "INTERNAL_SERVER_ERROR",
-          "An unexpected error occurred while authenticating.",
-        ),
-      );
-    }
-  },
-);
+        return reply.code(200).send({
+          data: result,
+          meta: {
+            requestId: request.id,
+          },
+        });
+      } catch (error) {
+        if (error instanceof InvalidCredentialsError) {
+          return reply
+            .code(401)
+            .send(
+              errorResponse(request.id, "INVALID_CREDENTIALS", "Email or password is incorrect."),
+            );
+        }
 
-app.post<{ Body: RefreshInput }>(
-  "/api/v1/auth/refresh",
-  {
-    schema: {
-      body: {
-        type: "object",
-        additionalProperties: false,
-        required: ["refreshToken"],
-        properties: {
-          refreshToken: {
-            type: "string",
-            minLength: 32,
-            maxLength: 512,
+        request.log.error({ err: error }, "Login failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while authenticating.",
+            ),
+          );
+      }
+    },
+  );
+
+  app.post<{ Body: RefreshInput }>(
+    "/api/v1/auth/refresh",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refreshToken"],
+          properties: {
+            refreshToken: {
+              type: "string",
+              minLength: 32,
+              maxLength: 512,
+            },
           },
         },
       },
+      attachValidation: true,
     },
-    attachValidation: true,
-  },
-  async (request, reply) => {
-    const refreshToken = (
-      request.body as { refreshToken?: unknown } | undefined
-    )?.refreshToken;
+    async (request, reply) => {
+      const refreshToken = (request.body as { refreshToken?: unknown } | undefined)?.refreshToken;
 
-    if (
-      request.validationError ||
-      typeof refreshToken !== "string" ||
-      refreshToken.length < 32 ||
-      refreshToken.length > 512
-    ) {
-      return reply.code(400).send(
-        errorResponse(
-          request.id,
-          "VALIDATION_ERROR",
-          "A valid refresh token is required.",
-        ),
-      );
-    }
-
-    try {
-      const result = await rotateRefreshToken(
-        { refreshToken },
-        { prisma: app.prisma },
-      );
-
-      return reply.code(200).send({
-        data: result,
-        meta: {
-          requestId: request.id,
-        },
-      });
-    } catch (error) {
-      if (error instanceof RefreshTokenReuseError) {
-        return reply.code(409).send(
-          errorResponse(
-            request.id,
-            "REFRESH_TOKEN_REUSE_DETECTED",
-            "The refresh token has already been used. Please authenticate again.",
-          ),
-        );
+      if (
+        request.validationError ||
+        typeof refreshToken !== "string" ||
+        refreshToken.length < 32 ||
+        refreshToken.length > 512
+      ) {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(request.id, "VALIDATION_ERROR", "A valid refresh token is required."),
+          );
       }
 
-      if (error instanceof InvalidRefreshTokenError) {
-        return reply.code(401).send(
-          errorResponse(
-            request.id,
-            "INVALID_REFRESH_TOKEN",
-            "The refresh token is invalid, expired or no longer active.",
-          ),
-        );
+      try {
+        const result = await rotateRefreshToken({ refreshToken }, { prisma: app.prisma });
+
+        return reply.code(200).send({
+          data: result,
+          meta: {
+            requestId: request.id,
+          },
+        });
+      } catch (error) {
+        if (error instanceof RefreshTokenReuseError) {
+          return reply
+            .code(409)
+            .send(
+              errorResponse(
+                request.id,
+                "REFRESH_TOKEN_REUSE_DETECTED",
+                "The refresh token has already been used. Please authenticate again.",
+              ),
+            );
+        }
+
+        if (error instanceof InvalidRefreshTokenError) {
+          return reply
+            .code(401)
+            .send(
+              errorResponse(
+                request.id,
+                "INVALID_REFRESH_TOKEN",
+                "The refresh token is invalid, expired or no longer active.",
+              ),
+            );
+        }
+
+        request.log.error({ err: error }, "Refresh-token rotation failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while refreshing the session.",
+            ),
+          );
       }
-
-      request.log.error(
-        { err: error },
-        "Refresh-token rotation failed.",
-      );
-
-      return reply.code(500).send(
-        errorResponse(
-          request.id,
-          "INTERNAL_SERVER_ERROR",
-          "An unexpected error occurred while refreshing the session.",
-        ),
-      );
-    }
-  },
-);
-
+    },
+  );
 }

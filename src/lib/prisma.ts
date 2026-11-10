@@ -1,4 +1,3 @@
-
 import "dotenv/config";
 
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -16,9 +15,7 @@ export function getPrismaClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
 
   if (!connectionString) {
-    throw new Error(
-      "DATABASE_URL is required to initialise Prisma Client.",
-    );
+    throw new Error("DATABASE_URL is required to initialise Prisma Client.");
   }
 
   const adapter = new PrismaPg({ connectionString });

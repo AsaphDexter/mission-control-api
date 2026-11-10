@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/app.js";
@@ -25,9 +18,8 @@ const transactionClient = {
 };
 
 const runTransaction = vi.fn(
-  async (
-    callback: (transaction: typeof transactionClient) => Promise<unknown>,
-  ) => callback(transactionClient),
+  async (callback: (transaction: typeof transactionClient) => Promise<unknown>) =>
+    callback(transactionClient),
 );
 
 const prismaMock = {
@@ -72,9 +64,7 @@ describe("POST /api/v1/auth/register", () => {
     createVerificationToken.mockReset().mockResolvedValue({});
     disconnect.mockReset().mockResolvedValue(undefined);
 
-    runTransaction.mockReset().mockImplementation(
-      async (callback) => callback(transactionClient),
-    );
+    runTransaction.mockReset().mockImplementation(async (callback) => callback(transactionClient));
 
     app = buildApp({
       logger: false,

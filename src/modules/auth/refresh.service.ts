@@ -1,19 +1,12 @@
 import type { PrismaClient } from "../../generated/prisma/client.js";
 
-import {
-  createAccessToken,
-  ACCESS_TOKEN_TTL_SECONDS,
-} from "./security/access-token.js";
+import { createAccessToken, ACCESS_TOKEN_TTL_SECONDS } from "./security/access-token.js";
 
-import {
-  generateOpaqueToken,
-  hashOpaqueToken,
-} from "./security/opaque-token.js";
+import { generateOpaqueToken, hashOpaqueToken } from "./security/opaque-token.js";
 
 import { REFRESH_TOKEN_TTL_SECONDS } from "./login.service.js";
 
-const REFRESH_TOKEN_TTL_MS =
-  REFRESH_TOKEN_TTL_SECONDS * 1000;
+const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_SECONDS * 1000;
 
 export interface RefreshInput {
   refreshToken: string;
@@ -77,47 +70,46 @@ export async function rotateRefreshToken(
 
   const outcome: RotationOutcome = await prisma.$transaction(
     async (transaction): Promise<RotationOutcome> => {
-      const storedToken =
-        await transaction.refreshToken.findUnique({
-          where: {
-            token_hash: tokenHash,
-          },
-          select: {
-            id: true,
-            user_id: true,
-            token_hash: true,
-            family_id: true,
-            auth_version_at_issue: true,
-            expires_at: true,
-            revoked_at: true,
-            replaced_by_token_id: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                first_name: true,
-                last_name: true,
-                display_name: true,
-                status: true,
-                auth_version: true,
-                email_verified_at: true,
-                created_at: true,
-                user_roles: {
-                  where: {
-                    revoked_at: null,
-                  },
-                  select: {
-                    role: {
-                      select: {
-                        code: true,
-                      },
+      const storedToken = await transaction.refreshToken.findUnique({
+        where: {
+          token_hash: tokenHash,
+        },
+        select: {
+          id: true,
+          user_id: true,
+          token_hash: true,
+          family_id: true,
+          auth_version_at_issue: true,
+          expires_at: true,
+          revoked_at: true,
+          replaced_by_token_id: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              first_name: true,
+              last_name: true,
+              display_name: true,
+              status: true,
+              auth_version: true,
+              email_verified_at: true,
+              created_at: true,
+              user_roles: {
+                where: {
+                  revoked_at: null,
+                },
+                select: {
+                  role: {
+                    select: {
+                      code: true,
                     },
                   },
                 },
               },
             },
           },
-        });
+        },
+      });
 
       if (!storedToken) {
         return { kind: "invalid" };
@@ -161,51 +153,44 @@ export async function rotateRefreshToken(
         storedToken.expires_at.getTime() <= currentTime.getTime() ||
         storedToken.user.status !== "ACTIVE" ||
         storedToken.user.email_verified_at === null ||
-        storedToken.auth_version_at_issue !==
-          storedToken.user.auth_version
+        storedToken.auth_version_at_issue !== storedToken.user.auth_version
       ) {
         return { kind: "invalid" };
       }
 
       // Atomically claim the existing token before issuing a replacement.
       // Only one concurrent request can successfully claim it.
-      const claimedToken =
-        await transaction.refreshToken.updateMany({
-          where: {
-            id: storedToken.id,
-            revoked_at: null,
-            replaced_by_token_id: null,
-            expires_at: {
-              gt: currentTime,
-            },
-            auth_version_at_issue:
-              storedToken.user.auth_version,
+      const claimedToken = await transaction.refreshToken.updateMany({
+        where: {
+          id: storedToken.id,
+          revoked_at: null,
+          replaced_by_token_id: null,
+          expires_at: {
+            gt: currentTime,
           },
-          data: {
-            revoked_at: currentTime,
-            last_used_at: currentTime,
-          },
-        });
+          auth_version_at_issue: storedToken.user.auth_version,
+        },
+        data: {
+          revoked_at: currentTime,
+          last_used_at: currentTime,
+        },
+      });
 
       if (claimedToken.count !== 1) {
         // Another request may have rotated this token while we were
         // processing. Read its latest state to distinguish replay
         // from ordinary invalidation.
-        const latestToken =
-          await transaction.refreshToken.findUnique({
-            where: {
-              id: storedToken.id,
-            },
-            select: {
-              revoked_at: true,
-              replaced_by_token_id: true,
-            },
-          });
+        const latestToken = await transaction.refreshToken.findUnique({
+          where: {
+            id: storedToken.id,
+          },
+          select: {
+            revoked_at: true,
+            replaced_by_token_id: true,
+          },
+        });
 
-        if (
-          latestToken?.revoked_at !== null &&
-          latestToken?.replaced_by_token_id !== null
-        ) {
+        if (latestToken?.revoked_at !== null && latestToken?.replaced_by_token_id !== null) {
           await transaction.refreshToken.updateMany({
             where: {
               user_id: storedToken.user_id,
@@ -236,19 +221,15 @@ export async function rotateRefreshToken(
 
       // Generate the replacement token. Only its hash is persisted.
       const replacementToken = generateOpaqueToken();
-      const replacementTokenHash =
-        hashOpaqueToken(replacementToken);
+      const replacementTokenHash = hashOpaqueToken(replacementToken);
 
       const replacement = await transaction.refreshToken.create({
         data: {
           user_id: storedToken.user_id,
           token_hash: replacementTokenHash,
           family_id: storedToken.family_id,
-          auth_version_at_issue:
-            storedToken.user.auth_version,
-          expires_at: new Date(
-            currentTime.getTime() + REFRESH_TOKEN_TTL_MS,
-          ),
+          auth_version_at_issue: storedToken.user.auth_version,
+          expires_at: new Date(currentTime.getTime() + REFRESH_TOKEN_TTL_MS),
         },
         select: {
           id: true,
@@ -277,8 +258,7 @@ export async function rotateRefreshToken(
           tokenType: "Bearer",
           expiresIn: ACCESS_TOKEN_TTL_SECONDS,
           refreshToken: replacementToken,
-          refreshTokenExpiresIn:
-            REFRESH_TOKEN_TTL_SECONDS,
+          refreshTokenExpiresIn: REFRESH_TOKEN_TTL_SECONDS,
           user: {
             id: storedToken.user.id,
             email: storedToken.user.email,
@@ -286,13 +266,9 @@ export async function rotateRefreshToken(
             lastName: storedToken.user.last_name,
             displayName: storedToken.user.display_name,
             status: storedToken.user.status,
-            emailVerified:
-              storedToken.user.email_verified_at !== null,
-            createdAt:
-              storedToken.user.created_at.toISOString(),
-            roles: storedToken.user.user_roles.map(
-              (userRole) => userRole.role.code,
-            ),
+            emailVerified: storedToken.user.email_verified_at !== null,
+            createdAt: storedToken.user.created_at.toISOString(),
+            roles: storedToken.user.user_roles.map((userRole) => userRole.role.code),
           },
         },
       };

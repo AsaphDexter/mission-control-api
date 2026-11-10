@@ -4,21 +4,15 @@ import type { PrismaClient } from "../../generated/prisma/client.js";
 
 import { createAccessToken, ACCESS_TOKEN_TTL_SECONDS } from "./security/access-token.js";
 import { hashPassword, verifyPassword } from "./security/password.js";
-import {
-  generateOpaqueToken,
-  hashOpaqueToken,
-} from "./security/opaque-token.js";
+import { generateOpaqueToken, hashOpaqueToken } from "./security/opaque-token.js";
 
 export const REFRESH_TOKEN_TTL_SECONDS = 604800;
 
-const REFRESH_TOKEN_TTL_MS =
-  REFRESH_TOKEN_TTL_SECONDS * 1000;
+const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_SECONDS * 1000;
 
 // Used to perform an Argon2 verification even when an email
 // address does not belong to an existing account.
-const DUMMY_PASSWORD_HASH = hashPassword(
-  "MissionControlDummyCredential_Only_2026",
-);
+const DUMMY_PASSWORD_HASH = hashPassword("MissionControlDummyCredential_Only_2026");
 
 export interface LoginInput {
   email: string;
@@ -93,21 +87,11 @@ export async function loginUser(
     },
   });
 
-  const passwordHash = user
-    ? user.password_hash
-    : await DUMMY_PASSWORD_HASH;
+  const passwordHash = user ? user.password_hash : await DUMMY_PASSWORD_HASH;
 
-  const passwordMatches = await verifyPassword(
-    input.password,
-    passwordHash,
-  );
+  const passwordMatches = await verifyPassword(input.password, passwordHash);
 
-  if (
-    !user ||
-    !passwordMatches ||
-    user.status !== "ACTIVE" ||
-    user.email_verified_at === null
-  ) {
+  if (!user || !passwordMatches || user.status !== "ACTIVE" || user.email_verified_at === null) {
     throw new InvalidCredentialsError();
   }
 
@@ -117,10 +101,7 @@ export async function loginUser(
   const refreshTokenHash = hashOpaqueToken(refreshToken);
   const familyId = randomUUID();
 
-  const accessToken = await createAccessToken(
-    user.id,
-    user.auth_version,
-  );
+  const accessToken = await createAccessToken(user.id, user.auth_version);
 
   await prisma.$transaction(async (transaction) => {
     // Confirm that the account has not been disabled or changed
@@ -149,9 +130,7 @@ export async function loginUser(
         token_hash: refreshTokenHash,
         family_id: familyId,
         auth_version_at_issue: user.auth_version,
-        expires_at: new Date(
-          currentTime.getTime() + REFRESH_TOKEN_TTL_MS,
-        ),
+        expires_at: new Date(currentTime.getTime() + REFRESH_TOKEN_TTL_MS),
       },
     });
   });
@@ -171,9 +150,7 @@ export async function loginUser(
       status: user.status,
       emailVerified: user.email_verified_at !== null,
       createdAt: user.created_at.toISOString(),
-      roles: user.user_roles.map(
-        (userRole) => userRole.role.code,
-      ),
+      roles: user.user_roles.map((userRole) => userRole.role.code),
     },
   };
 }

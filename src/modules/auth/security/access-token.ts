@@ -24,30 +24,22 @@ export interface VerifiedAccessToken {
 function getAccessTokenKey(): Buffer {
   const encodedSecret = process.env.JWT_ACCESS_SECRET;
 
-if (!encodedSecret) {
-  throw new AccessTokenConfigurationError(
-    "JWT_ACCESS_SECRET is required.",
-  );
-}
+  if (!encodedSecret) {
+    throw new AccessTokenConfigurationError("JWT_ACCESS_SECRET is required.");
+  }
 
   const key = Buffer.from(encodedSecret, "base64url");
 
-  if (
-    key.length !== 32 ||
-    key.toString("base64url") !== encodedSecret
-  ) {
-throw new AccessTokenConfigurationError(
-  "JWT_ACCESS_SECRET must be a base64url-encoded 32-byte secret.",
-);
+  if (key.length !== 32 || key.toString("base64url") !== encodedSecret) {
+    throw new AccessTokenConfigurationError(
+      "JWT_ACCESS_SECRET must be a base64url-encoded 32-byte secret.",
+    );
   }
 
   return key;
 }
 
-export async function createAccessToken(
-  userId: string,
-  authVersion: number,
-): Promise<string> {
+export async function createAccessToken(userId: string, authVersion: number): Promise<string> {
   if (!userId.trim()) {
     throw new Error("A valid user ID is required.");
   }
@@ -70,19 +62,13 @@ export async function createAccessToken(
     .sign(getAccessTokenKey());
 }
 
-export async function verifyAccessToken(
-  token: string,
-): Promise<VerifiedAccessToken> {
-  const { payload } = await jwtVerify(
-    token,
-    getAccessTokenKey(),
-    {
-      algorithms: ["HS256"],
-      issuer: TOKEN_ISSUER,
-      audience: TOKEN_AUDIENCE,
-      maxTokenAge: ACCESS_TOKEN_TTL,
-    },
-  );
+export async function verifyAccessToken(token: string): Promise<VerifiedAccessToken> {
+  const { payload } = await jwtVerify(token, getAccessTokenKey(), {
+    algorithms: ["HS256"],
+    issuer: TOKEN_ISSUER,
+    audience: TOKEN_AUDIENCE,
+    maxTokenAge: ACCESS_TOKEN_TTL,
+  });
 
   if (
     typeof payload.sub !== "string" ||

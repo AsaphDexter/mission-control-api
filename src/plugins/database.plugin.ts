@@ -1,4 +1,3 @@
-
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "../generated/prisma/client.js";
 
@@ -8,10 +7,7 @@ declare module "fastify" {
   }
 }
 
-export function registerDatabase(
-  app: FastifyInstance,
-  client: PrismaClient,
-): void {
+export function registerDatabase(app: FastifyInstance, client: PrismaClient): void {
   app.decorate("prisma", client);
 
   app.addHook("onClose", async () => {

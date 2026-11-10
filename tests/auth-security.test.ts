@@ -1,4 +1,3 @@
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -8,21 +7,14 @@ import {
   verifyPassword,
 } from "../src/modules/auth/security/password.js";
 
-import {
-  generateOpaqueToken,
-  hashOpaqueToken,
-} from "../src/modules/auth/security/opaque-token.js";
+import { generateOpaqueToken, hashOpaqueToken } from "../src/modules/auth/security/opaque-token.js";
 
-import {
-  createAccessToken,
-  verifyAccessToken,
-} from "../src/modules/auth/security/access-token.js";
+import { createAccessToken, verifyAccessToken } from "../src/modules/auth/security/access-token.js";
 
 const previousSecret = process.env.JWT_ACCESS_SECRET;
 
 beforeAll(() => {
-  process.env.JWT_ACCESS_SECRET =
-    Buffer.alloc(32, 0x42).toString("base64url");
+  process.env.JWT_ACCESS_SECRET = Buffer.alloc(32, 0x42).toString("base64url");
 });
 
 afterAll(() => {
@@ -41,9 +33,7 @@ describe("Password security", () => {
 
   it("rejects passwords below or above the permitted range", () => {
     expect(() => assertPasswordPolicy("short")).toThrow(PasswordPolicyError);
-    expect(() => assertPasswordPolicy("a".repeat(129))).toThrow(
-      PasswordPolicyError,
-    );
+    expect(() => assertPasswordPolicy("a".repeat(129))).toThrow(PasswordPolicyError);
   });
 
   it("hashes passwords using Argon2id and verifies them", async () => {
@@ -53,9 +43,7 @@ describe("Password security", () => {
     expect(passwordHash).toContain("$argon2id$");
     expect(passwordHash).not.toBe(password);
     await expect(verifyPassword(password, passwordHash)).resolves.toBe(true);
-    await expect(
-      verifyPassword("Incorrect-Password", passwordHash),
-    ).resolves.toBe(false);
+    await expect(verifyPassword("Incorrect-Password", passwordHash)).resolves.toBe(false);
   });
 
   it("generates a different salted hash for the same password", async () => {
@@ -91,10 +79,7 @@ describe("Opaque tokens", () => {
 
 describe("JWT access tokens", () => {
   it("creates and verifies a signed access token", async () => {
-    const token = await createAccessToken(
-      "00000000-0000-4000-8000-000000000001",
-      1,
-    );
+    const token = await createAccessToken("00000000-0000-4000-8000-000000000001", 1);
 
     const claims = await verifyAccessToken(token);
 
@@ -107,23 +92,14 @@ describe("JWT access tokens", () => {
   });
 
   it("rejects a tampered access token", async () => {
-    const token = await createAccessToken(
-      "00000000-0000-4000-8000-000000000001",
-      1,
-    );
+    const token = await createAccessToken("00000000-0000-4000-8000-000000000001", 1);
 
-    const tamperedToken =
-      `${token.slice(0, 10)}x${token.slice(11)}`;
+    const tamperedToken = `${token.slice(0, 10)}x${token.slice(11)}`;
 
     await expect(verifyAccessToken(tamperedToken)).rejects.toThrow();
   });
 
   it("rejects invalid authentication versions", async () => {
-    await expect(
-      createAccessToken(
-        "00000000-0000-4000-8000-000000000001",
-        0,
-      ),
-    ).rejects.toThrow();
+    await expect(createAccessToken("00000000-0000-4000-8000-000000000001", 0)).rejects.toThrow();
   });
 });
