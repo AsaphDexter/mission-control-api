@@ -14,6 +14,19 @@ import {
 
 import { resendVerificationEmail } from "./resend-verification.service.js";
 
+import {
+  InvalidCredentialsError,
+  loginUser,
+  type LoginInput,
+} from "./login.service.js";
+
+import {
+  InvalidRefreshTokenError,
+  RefreshTokenReuseError,
+  rotateRefreshToken,
+  type RefreshInput,
+} from "./refresh.service.js";
+
 function errorResponse(
   requestId: string,
   code: string,
@@ -381,4 +394,167 @@ export async function authRoutes(
     }
   },
 );
+
+
+app.post<{ Body: LoginInput }>(
+  "/api/v1/auth/login",
+  {
+    schema: {
+      body: {
+        type: "object",
+        additionalProperties: false,
+        required: ["email", "password"],
+        properties: {
+          email: {
+            type: "string",
+            format: "email",
+            maxLength: 254,
+          },
+          password: {
+            type: "string",
+            minLength: 1,
+            maxLength: 128,
+          },
+        },
+      },
+    },
+    attachValidation: true,
+  },
+  async (request, reply) => {
+    if (request.validationError) {
+      return reply.code(400).send(
+        errorResponse(
+          request.id,
+          "VALIDATION_ERROR",
+          "A valid email address and password are required.",
+        ),
+      );
+    }
+
+    try {
+      const result = await loginUser(request.body, {
+        prisma: app.prisma,
+      });
+
+      return reply.code(200).send({
+        data: result,
+        meta: {
+          requestId: request.id,
+        },
+      });
+    } catch (error) {
+      if (error instanceof InvalidCredentialsError) {
+        return reply.code(401).send(
+          errorResponse(
+            request.id,
+            "INVALID_CREDENTIALS",
+            "Email or password is incorrect.",
+          ),
+        );
+      }
+
+      request.log.error(
+        { err: error },
+        "Login failed.",
+      );
+
+      return reply.code(500).send(
+        errorResponse(
+          request.id,
+          "INTERNAL_SERVER_ERROR",
+          "An unexpected error occurred while authenticating.",
+        ),
+      );
+    }
+  },
+);
+
+app.post<{ Body: RefreshInput }>(
+  "/api/v1/auth/refresh",
+  {
+    schema: {
+      body: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refreshToken"],
+        properties: {
+          refreshToken: {
+            type: "string",
+            minLength: 32,
+            maxLength: 512,
+          },
+        },
+      },
+    },
+    attachValidation: true,
+  },
+  async (request, reply) => {
+    const refreshToken = (
+      request.body as { refreshToken?: unknown } | undefined
+    )?.refreshToken;
+
+    if (
+      request.validationError ||
+      typeof refreshToken !== "string" ||
+      refreshToken.length < 32 ||
+      refreshToken.length > 512
+    ) {
+      return reply.code(400).send(
+        errorResponse(
+          request.id,
+          "VALIDATION_ERROR",
+          "A valid refresh token is required.",
+        ),
+      );
+    }
+
+    try {
+      const result = await rotateRefreshToken(
+        { refreshToken },
+        { prisma: app.prisma },
+      );
+
+      return reply.code(200).send({
+        data: result,
+        meta: {
+          requestId: request.id,
+        },
+      });
+    } catch (error) {
+      if (error instanceof RefreshTokenReuseError) {
+        return reply.code(409).send(
+          errorResponse(
+            request.id,
+            "REFRESH_TOKEN_REUSE_DETECTED",
+            "The refresh token has already been used. Please authenticate again.",
+          ),
+        );
+      }
+
+      if (error instanceof InvalidRefreshTokenError) {
+        return reply.code(401).send(
+          errorResponse(
+            request.id,
+            "INVALID_REFRESH_TOKEN",
+            "The refresh token is invalid, expired or no longer active.",
+          ),
+        );
+      }
+
+      request.log.error(
+        { err: error },
+        "Refresh-token rotation failed.",
+      );
+
+      return reply.code(500).send(
+        errorResponse(
+          request.id,
+          "INTERNAL_SERVER_ERROR",
+          "An unexpected error occurred while refreshing the session.",
+        ),
+      );
+    }
+  },
+);
+
 }

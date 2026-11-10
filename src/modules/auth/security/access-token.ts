@@ -7,6 +7,13 @@ const ACCESS_TOKEN_TTL = "15m";
 const TOKEN_ISSUER = "mission-control-api";
 const TOKEN_AUDIENCE = "mission-control-api";
 
+export class AccessTokenConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AccessTokenConfigurationError";
+  }
+}
+
 export interface VerifiedAccessToken {
   userId: string;
   authVersion: number;
@@ -17,9 +24,11 @@ export interface VerifiedAccessToken {
 function getAccessTokenKey(): Buffer {
   const encodedSecret = process.env.JWT_ACCESS_SECRET;
 
-  if (!encodedSecret) {
-    throw new Error("JWT_ACCESS_SECRET is required.");
-  }
+if (!encodedSecret) {
+  throw new AccessTokenConfigurationError(
+    "JWT_ACCESS_SECRET is required.",
+  );
+}
 
   const key = Buffer.from(encodedSecret, "base64url");
 
@@ -27,9 +36,9 @@ function getAccessTokenKey(): Buffer {
     key.length !== 32 ||
     key.toString("base64url") !== encodedSecret
   ) {
-    throw new Error(
-      "JWT_ACCESS_SECRET must be a base64url-encoded 32-byte secret.",
-    );
+throw new AccessTokenConfigurationError(
+  "JWT_ACCESS_SECRET must be a base64url-encoded 32-byte secret.",
+);
   }
 
   return key;
