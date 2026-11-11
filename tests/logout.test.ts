@@ -13,12 +13,16 @@ const TOKEN_FAMILY_ID = "5a3c9c0a-3d24-4a77-a1b3-123456789abc";
 const findAuthenticatedUser = vi.fn();
 const findStoredToken = vi.fn();
 const revokeFamilyTokens = vi.fn();
+const incrementUserAuthVersion = vi.fn();
 const disconnect = vi.fn();
 
 const transactionClient = {
   refreshToken: {
     findUnique: findStoredToken,
     updateMany: revokeFamilyTokens,
+  },
+  user: {
+    update: incrementUserAuthVersion,
   },
 };
 
@@ -81,6 +85,7 @@ describe("POST /api/v1/auth/logout", () => {
 
     findAuthenticatedUser.mockReset().mockResolvedValue(activeUser());
     findStoredToken.mockReset().mockResolvedValue(storedToken());
+    incrementUserAuthVersion.mockReset().mockResolvedValue({});
 
     revokeFamilyTokens.mockReset().mockResolvedValue({
       count: 2,
@@ -94,6 +99,16 @@ describe("POST /api/v1/auth/logout", () => {
       logger: false,
       prisma: prismaMock,
     });
+
+    app.get(
+      "/__test/protected",
+      {
+        preHandler: app.authenticate,
+      },
+      async (request) => ({
+        userId: request.authenticatedUser?.id ?? null,
+      }),
+    );
   });
 
   afterEach(async () => {
@@ -285,5 +300,85 @@ describe("POST /api/v1/auth/logout", () => {
 
     expect(response.statusCode).toBe(500);
     expect(response.json().error.code).toBe("INTERNAL_SERVER_ERROR");
+  });
+
+  it("rejects refresh-token replay after logout without treating it as token reuse", async () => {
+    const loggedOutToken = {
+      id: "logged-out-refresh-token-id",
+      user_id: TEST_USER_ID,
+      token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
+      family_id: TOKEN_FAMILY_ID,
+      auth_version_at_issue: 1,
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: new Date(),
+      replaced_by_token_id: null,
+    };
+
+    // First lookup belongs to logout. Second lookup represents
+    // the same token after its family has been revoked.
+    findStoredToken.mockResolvedValueOnce(storedToken()).mockResolvedValueOnce(loggedOutToken);
+
+    const accessToken = await makeAccessToken();
+
+    const logoutResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(logoutResponse.statusCode).toBe(204);
+
+    const refreshResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(refreshResponse.statusCode).toBe(401);
+    expect(refreshResponse.json().error.code).toBe("INVALID_REFRESH_TOKEN");
+
+    // Logout revoked the family once. Replay must not trigger
+    // another family revocation or account-wide invalidation.
+    expect(revokeFamilyTokens).toHaveBeenCalledOnce();
+    expect(incrementUserAuthVersion).not.toHaveBeenCalled();
+  });
+
+  it("allows the existing access token until expiry after ordinary logout", async () => {
+    const accessToken = await makeAccessToken();
+
+    const logoutResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(logoutResponse.statusCode).toBe(204);
+
+    const protectedResponse = await app.inject({
+      method: "GET",
+      url: "/__test/protected",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    expect(protectedResponse.statusCode).toBe(200);
+    expect(protectedResponse.json()).toStrictEqual({
+      userId: TEST_USER_ID,
+    });
+
+    expect(incrementUserAuthVersion).not.toHaveBeenCalled();
   });
 });
