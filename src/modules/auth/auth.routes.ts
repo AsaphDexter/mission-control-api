@@ -23,6 +23,8 @@ import {
   type RefreshInput,
 } from "./refresh.service.js";
 
+import { LogoutSessionNotFoundError, logoutSession, type LogoutInput } from "./logout.service.js";
+
 function errorResponse(requestId: string, code: string, message: string) {
   return {
     error: {
@@ -516,6 +518,88 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
               request.id,
               "INTERNAL_SERVER_ERROR",
               "An unexpected error occurred while refreshing the session.",
+            ),
+          );
+      }
+    },
+  );
+
+  app.post<{ Body: LogoutInput }>(
+    "/api/v1/auth/logout",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refreshToken"],
+          properties: {
+            refreshToken: {
+              type: "string",
+              minLength: 32,
+              maxLength: 512,
+            },
+          },
+        },
+      },
+      attachValidation: true,
+    },
+    async (request, reply) => {
+      const refreshToken = (request.body as { refreshToken?: unknown } | undefined)?.refreshToken;
+
+      if (
+        request.validationError ||
+        typeof refreshToken !== "string" ||
+        refreshToken.length < 32 ||
+        refreshToken.length > 512
+      ) {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(request.id, "VALIDATION_ERROR", "A valid refresh token is required."),
+          );
+      }
+
+      const authenticatedUser = request.authenticatedUser;
+
+      if (!authenticatedUser) {
+        return reply
+          .code(401)
+          .send(
+            errorResponse(
+              request.id,
+              "UNAUTHENTICATED",
+              "A valid bearer access token is required.",
+            ),
+          );
+      }
+
+      try {
+        await logoutSession(authenticatedUser.id, { refreshToken }, { prisma: app.prisma });
+
+        return reply.code(204).send();
+      } catch (error) {
+        if (error instanceof LogoutSessionNotFoundError) {
+          return reply
+            .code(404)
+            .send(
+              errorResponse(
+                request.id,
+                "LOGOUT_SESSION_NOT_FOUND",
+                "The refresh-token session was not found.",
+              ),
+            );
+        }
+
+        request.log.error({ err: error }, "Logout failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while ending the session.",
             ),
           );
       }

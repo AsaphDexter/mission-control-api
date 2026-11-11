@@ -13,6 +13,11 @@ export function buildApp(options: AppOptions) {
   const { prisma, ...fastifyOptions } = options;
 
   const app = Fastify({
+    ajv: {
+      customOptions: {
+        removeAdditional: false,
+      },
+    },
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
     },
