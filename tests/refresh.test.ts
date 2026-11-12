@@ -13,6 +13,7 @@ const createNewRefreshToken = vi.fn();
 const updateOldRefreshToken = vi.fn();
 const incrementUserAuthVersion = vi.fn();
 const disconnect = vi.fn();
+const lockUserRow = vi.fn();
 
 const transactionClient = {
   refreshToken: {
@@ -24,6 +25,7 @@ const transactionClient = {
   user: {
     update: incrementUserAuthVersion,
   },
+  $queryRaw: lockUserRow,
 };
 
 const runTransaction = vi.fn(
@@ -101,6 +103,7 @@ describe("POST /api/v1/auth/refresh", () => {
     updateOldRefreshToken.mockReset().mockResolvedValue({});
     incrementUserAuthVersion.mockReset().mockResolvedValue({});
     disconnect.mockReset().mockResolvedValue(undefined);
+    lockUserRow.mockReset().mockResolvedValue([{ id: "test-user-id" }]);
 
     runTransaction.mockReset().mockImplementation(async (callback) => callback(transactionClient));
 
@@ -299,10 +302,13 @@ describe("POST /api/v1/auth/refresh", () => {
   });
 
   it("detects concurrent reuse after another request claims the token", async () => {
-    findStoredToken.mockResolvedValueOnce(activeStoredToken()).mockResolvedValueOnce({
-      revoked_at: new Date(),
-      replaced_by_token_id: "concurrent-replacement-id",
-    });
+    findStoredToken
+      .mockResolvedValueOnce(activeStoredToken())
+      .mockResolvedValueOnce(activeStoredToken())
+      .mockResolvedValueOnce({
+        revoked_at: new Date(),
+        replaced_by_token_id: "concurrent-replacement-id",
+      });
 
     updateRefreshTokenMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 2 });
 
@@ -317,7 +323,7 @@ describe("POST /api/v1/auth/refresh", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json().error.code).toBe("REFRESH_TOKEN_REUSE_DETECTED");
 
-    expect(findStoredToken).toHaveBeenCalledTimes(2);
+    expect(findStoredToken).toHaveBeenCalledTimes(3);
     expect(incrementUserAuthVersion).toHaveBeenCalledOnce();
     expect(createNewRefreshToken).not.toHaveBeenCalled();
   });

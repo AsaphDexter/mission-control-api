@@ -70,6 +70,33 @@ export async function rotateRefreshToken(
 
   const outcome: RotationOutcome = await prisma.$transaction(
     async (transaction): Promise<RotationOutcome> => {
+      const tokenOwner = await transaction.refreshToken.findUnique({
+        where: {
+          token_hash: tokenHash,
+        },
+        select: {
+          user_id: true,
+        },
+      });
+
+      if (!tokenOwner) {
+        return { kind: "invalid" };
+      }
+
+      // Use the same account-level lock as the logout operation.
+      const lockedUsers = await transaction.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "users"
+        WHERE "id" = ${tokenOwner.user_id}::uuid
+        FOR UPDATE
+      `;
+
+      if (lockedUsers.length !== 1) {
+        return { kind: "invalid" };
+      }
+
+      // Re-read the token after obtaining the lock. Another session
+      // operation may have changed its state while this transaction waited.
       const storedToken = await transaction.refreshToken.findUnique({
         where: {
           token_hash: tokenHash,
@@ -111,7 +138,7 @@ export async function rotateRefreshToken(
         },
       });
 
-      if (!storedToken) {
+      if (!storedToken || storedToken.user_id !== tokenOwner.user_id) {
         return { kind: "invalid" };
       }
 

@@ -28,19 +28,30 @@ export async function logoutSession(
   const tokenHash = hashOpaqueToken(input.refreshToken);
 
   const sessionFound = await prisma.$transaction(async (transaction) => {
-    const storedToken = await transaction.refreshToken.findUnique({
+    // Serialise refresh and logout operations belonging to this account.
+    const lockedUsers = await transaction.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "users"
+      WHERE "id" = ${userId}::uuid
+      FOR UPDATE
+    `;
+
+    if (lockedUsers.length !== 1) {
+      return false;
+    }
+
+    // Scope the token lookup to the authenticated account.
+    const storedToken = await transaction.refreshToken.findFirst({
       where: {
         token_hash: tokenHash,
+        user_id: userId,
       },
       select: {
-        user_id: true,
         family_id: true,
       },
     });
 
-    // Do not reveal whether a token exists when it belongs to
-    // another account.
-    if (!storedToken || storedToken.user_id !== userId) {
+    if (!storedToken) {
       return false;
     }
 

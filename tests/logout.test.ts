@@ -12,13 +12,17 @@ const TOKEN_FAMILY_ID = "5a3c9c0a-3d24-4a77-a1b3-123456789abc";
 
 const findAuthenticatedUser = vi.fn();
 const findStoredToken = vi.fn();
+const findRefreshToken = vi.fn();
+const lockUserRow = vi.fn();
 const revokeFamilyTokens = vi.fn();
 const incrementUserAuthVersion = vi.fn();
 const disconnect = vi.fn();
 
 const transactionClient = {
+  $queryRaw: lockUserRow,
   refreshToken: {
-    findUnique: findStoredToken,
+    findFirst: findStoredToken,
+    findUnique: findRefreshToken,
     updateMany: revokeFamilyTokens,
   },
   user: {
@@ -85,7 +89,9 @@ describe("POST /api/v1/auth/logout", () => {
 
     findAuthenticatedUser.mockReset().mockResolvedValue(activeUser());
     findStoredToken.mockReset().mockResolvedValue(storedToken());
+    findRefreshToken.mockReset().mockResolvedValue(null);
     incrementUserAuthVersion.mockReset().mockResolvedValue({});
+    lockUserRow.mockReset().mockResolvedValue([{ id: TEST_USER_ID }]);
 
     revokeFamilyTokens.mockReset().mockResolvedValue({
       count: 2,
@@ -139,9 +145,9 @@ describe("POST /api/v1/auth/logout", () => {
     expect(findStoredToken).toHaveBeenCalledWith({
       where: {
         token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
+        user_id: TEST_USER_ID,
       },
       select: {
-        user_id: true,
         family_id: true,
       },
     });
@@ -240,7 +246,7 @@ describe("POST /api/v1/auth/logout", () => {
   });
 
   it("does not revoke a refresh-token family belonging to another user", async () => {
-    findStoredToken.mockResolvedValue(storedToken(OTHER_USER_ID));
+    findStoredToken.mockResolvedValue(null);
 
     const accessToken = await makeAccessToken();
 
@@ -257,6 +263,16 @@ describe("POST /api/v1/auth/logout", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("LOGOUT_SESSION_NOT_FOUND");
+
+    expect(findStoredToken).toHaveBeenCalledWith({
+      where: {
+        token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
+        user_id: TEST_USER_ID,
+      },
+      select: {
+        family_id: true,
+      },
+    });
 
     expect(revokeFamilyTokens).not.toHaveBeenCalled();
   });
@@ -314,9 +330,8 @@ describe("POST /api/v1/auth/logout", () => {
       replaced_by_token_id: null,
     };
 
-    // First lookup belongs to logout. Second lookup represents
-    // the same token after its family has been revoked.
-    findStoredToken.mockResolvedValueOnce(storedToken()).mockResolvedValueOnce(loggedOutToken);
+    findStoredToken.mockResolvedValue(storedToken());
+    findRefreshToken.mockResolvedValue(loggedOutToken);
 
     const accessToken = await makeAccessToken();
 
