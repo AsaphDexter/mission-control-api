@@ -145,7 +145,31 @@ export async function rotateRefreshToken(
       // A token that has already been rotated has a replacement link.
       // Its reuse is treated as a confirmed session compromise.
       if (storedToken.revoked_at !== null) {
-        if (storedToken.replaced_by_token_id === null) {
+        if (
+          storedToken.replaced_by_token_id === null ||
+          storedToken.auth_version_at_issue !== storedToken.user.auth_version
+        ) {
+          return { kind: "invalid" };
+        }
+
+        // A replay is a security incident only when this token family
+        // still has an active, unexpired refresh token.
+        const activeFamilyToken = await transaction.refreshToken.findFirst({
+          where: {
+            user_id: storedToken.user_id,
+            family_id: storedToken.family_id,
+            revoked_at: null,
+            expires_at: {
+              gt: currentTime,
+            },
+            auth_version_at_issue: storedToken.user.auth_version,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!activeFamilyToken) {
           return { kind: "invalid" };
         }
 
@@ -217,7 +241,31 @@ export async function rotateRefreshToken(
           },
         });
 
-        if (latestToken?.revoked_at !== null && latestToken?.replaced_by_token_id !== null) {
+        if (
+          latestToken &&
+          latestToken.revoked_at !== null &&
+          latestToken.replaced_by_token_id !== null
+        ) {
+          // Verify that this token family still has an active, unexpired family token
+          const activeFamilyToken = await transaction.refreshToken.findFirst({
+            where: {
+              user_id: storedToken.user_id,
+              family_id: storedToken.family_id,
+              revoked_at: null,
+              expires_at: {
+                gt: currentTime,
+              },
+              auth_version_at_issue: storedToken.user.auth_version,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          if (!activeFamilyToken) {
+            return { kind: "invalid" };
+          }
+
           await transaction.refreshToken.updateMany({
             where: {
               user_id: storedToken.user_id,

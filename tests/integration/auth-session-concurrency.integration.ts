@@ -373,4 +373,92 @@ describe("PostgreSQL auth session concurrency", () => {
     // A normal logout followed by an attempted reuse is not a compromise event.
     expect(user?.auth_version).toBe(1);
   });
+
+  it("does not invalidate a new session when an old rotated token is replayed after logout", async () => {
+    const userId = await createActiveUser();
+
+    // Create the original session and rotate its first token.
+    const originalSession = await createRefreshToken(userId);
+
+    const rotation = await rotateRefreshToken(
+      {
+        refreshToken: originalSession.raw,
+      },
+      {
+        prisma,
+      },
+    );
+
+    // Log out using the replacement token, revoking the entire old family.
+    await logoutSession(
+      userId,
+      {
+        refreshToken: rotation.refreshToken,
+      },
+      {
+        prisma,
+      },
+    );
+
+    // Simulate a fresh login on another device.
+    const newSession = await createRefreshToken(userId);
+
+    // Replay the original, already-rotated token.
+    await expect(
+      rotateRefreshToken(
+        {
+          refreshToken: originalSession.raw,
+        },
+        {
+          prisma,
+        },
+      ),
+    ).rejects.toBeInstanceOf(InvalidRefreshTokenError);
+
+    // The old family must remain fully revoked.
+    const oldFamily = await prisma.refreshToken.findMany({
+      where: {
+        user_id: userId,
+        family_id: originalSession.familyId,
+      },
+    });
+
+    expect(oldFamily).toHaveLength(2);
+    expect(oldFamily.every((token) => token.revoked_at !== null)).toBe(true);
+
+    // The fresh session must remain active and usable.
+    const newTokenRecord = await prisma.refreshToken.findUnique({
+      where: {
+        token_hash: hashOpaqueToken(newSession.raw),
+      },
+      select: {
+        revoked_at: true,
+      },
+    });
+
+    expect(newTokenRecord?.revoked_at).toBeNull();
+
+    const freshRotation = await rotateRefreshToken(
+      {
+        refreshToken: newSession.raw,
+      },
+      {
+        prisma,
+      },
+    );
+
+    expect(freshRotation.user.id).toBe(userId);
+
+    // Replaying the old token must not trigger account-wide invalidation.
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        auth_version: true,
+      },
+    });
+
+    expect(user?.auth_version).toBe(1);
+  });
 });

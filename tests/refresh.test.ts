@@ -5,6 +5,7 @@ import { buildApp } from "../src/app.js";
 import { hashOpaqueToken } from "../src/modules/auth/security/opaque-token.js";
 import { verifyAccessToken } from "../src/modules/auth/security/access-token.js";
 
+const findActiveFamilyToken = vi.fn();
 const RAW_REFRESH_TOKEN = "R".repeat(43);
 
 const findStoredToken = vi.fn();
@@ -18,6 +19,7 @@ const lockUserRow = vi.fn();
 const transactionClient = {
   refreshToken: {
     findUnique: findStoredToken,
+    findFirst: findActiveFamilyToken,
     updateMany: updateRefreshTokenMany,
     create: createNewRefreshToken,
     update: updateOldRefreshToken,
@@ -91,6 +93,9 @@ describe("POST /api/v1/auth/refresh", () => {
 
   beforeEach(() => {
     findStoredToken.mockReset().mockResolvedValue(activeStoredToken());
+    findActiveFamilyToken.mockReset().mockResolvedValue({
+      id: "active-family-successor-id",
+    });
 
     updateRefreshTokenMany.mockReset().mockResolvedValue({
       count: 1,
@@ -115,6 +120,105 @@ describe("POST /api/v1/auth/refresh", () => {
 
   afterEach(async () => {
     await app.close();
+  });
+
+  it("does not repeatedly invalidate new sessions when an old rotated token is replayed", async () => {
+    const token = activeStoredToken();
+
+    findStoredToken.mockResolvedValue({
+      ...token,
+      revoked_at: new Date(Date.now() - 30_000),
+      replaced_by_token_id: "previous-replacement-id",
+      user: {
+        ...token.user,
+        auth_version: 2,
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
+
+    expect(findActiveFamilyToken).not.toHaveBeenCalled();
+    expect(updateRefreshTokenMany).not.toHaveBeenCalled();
+    expect(incrementUserAuthVersion).not.toHaveBeenCalled();
+    expect(createNewRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a replay from an already logged-out family as a new compromise", async () => {
+    const token = activeStoredToken();
+
+    findStoredToken.mockResolvedValue({
+      ...token,
+      revoked_at: new Date(Date.now() - 30_000),
+      replaced_by_token_id: "previous-replacement-id",
+    });
+
+    findActiveFamilyToken.mockResolvedValue(null);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
+
+    expect(findActiveFamilyToken).toHaveBeenCalledWith({
+      where: {
+        user_id: "test-user-id",
+        family_id: "test-token-family-id",
+        revoked_at: null,
+        expires_at: {
+          gt: expect.any(Date),
+        },
+        auth_version_at_issue: 1,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    expect(updateRefreshTokenMany).not.toHaveBeenCalled();
+    expect(incrementUserAuthVersion).not.toHaveBeenCalled();
+  });
+
+  it("rejects a failed token claim when the latest token record cannot be found", async () => {
+    findStoredToken
+      .mockResolvedValueOnce({
+        user_id: "test-user-id",
+      })
+      .mockResolvedValueOnce(activeStoredToken())
+      .mockResolvedValueOnce(null);
+
+    updateRefreshTokenMany.mockResolvedValueOnce({
+      count: 0,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: {
+        refreshToken: RAW_REFRESH_TOKEN,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("INVALID_REFRESH_TOKEN");
+
+    expect(findActiveFamilyToken).not.toHaveBeenCalled();
+    expect(incrementUserAuthVersion).not.toHaveBeenCalled();
+    expect(createNewRefreshToken).not.toHaveBeenCalled();
   });
 
   it("rotates a valid refresh token and returns a new session", async () => {
