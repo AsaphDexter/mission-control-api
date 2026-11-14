@@ -324,6 +324,7 @@ export async function rotateRefreshToken(
       const accessToken = await createAccessToken(
         storedToken.user.id,
         storedToken.user.auth_version,
+        storedToken.family_id,
       );
 
       return {

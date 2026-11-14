@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import type { PrismaClient } from "../../generated/prisma/client.js";
-
 import { createAccessToken, ACCESS_TOKEN_TTL_SECONDS } from "./security/access-token.js";
 import { hashPassword, verifyPassword } from "./security/password.js";
 import { generateOpaqueToken, hashOpaqueToken } from "./security/opaque-token.js";
@@ -101,7 +100,7 @@ export async function loginUser(
   const refreshTokenHash = hashOpaqueToken(refreshToken);
   const familyId = randomUUID();
 
-  const accessToken = await createAccessToken(user.id, user.auth_version);
+  const accessToken = await createAccessToken(user.id, user.auth_version, familyId);
 
   await prisma.$transaction(async (transaction) => {
     // Confirm that the account has not been disabled or changed

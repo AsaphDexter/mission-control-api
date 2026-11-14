@@ -6,15 +6,20 @@ import { buildApp } from "../src/app.js";
 import { createAccessToken } from "../src/modules/auth/security/access-token.js";
 
 const TEST_USER_ID = "8e1c9c0a-3d24-4a77-a1b3-123456789abc";
+const TEST_SESSION_ID = "f13c9c0a-3d24-4a77-a1b3-123456789abc";
 const TEST_JWT_KEY = Buffer.alloc(32, 0x73);
 const TEST_JWT_SECRET = TEST_JWT_KEY.toString("base64url");
 
 const findUser = vi.fn();
+const findActiveSessionToken = vi.fn();
 const disconnect = vi.fn();
 
 const prismaMock = {
   user: {
     findUnique: findUser,
+  },
+  refreshToken: {
+    findFirst: findActiveSessionToken,
   },
   $disconnect: disconnect,
 } as unknown as PrismaClient;
@@ -64,6 +69,11 @@ describe("Authentication plugin", () => {
     process.env.JWT_ACCESS_SECRET = TEST_JWT_SECRET;
 
     findUser.mockReset().mockResolvedValue(activeUser());
+
+    findActiveSessionToken
+      .mockReset()
+      .mockResolvedValue({ id: "test-refresh-token-id" });
+
     disconnect.mockReset().mockResolvedValue(undefined);
 
     app = buildApp({
@@ -88,7 +98,7 @@ describe("Authentication plugin", () => {
   });
 
   async function makeAccessToken(userId = TEST_USER_ID, authVersion = 1): Promise<string> {
-    return createAccessToken(userId, authVersion);
+    return createAccessToken(userId, authVersion, TEST_SESSION_ID);
   }
 
   function expectAuthenticationError(
@@ -148,6 +158,7 @@ describe("Authentication plugin", () => {
 
     const expiredToken = await new SignJWT({
       authVersion: 1,
+      sid: TEST_SESSION_ID,
     })
       .setProtectedHeader({
         alg: "HS256",
@@ -270,8 +281,55 @@ describe("Authentication plugin", () => {
     expectAuthenticationError(response, 401, "SESSION_INVALID");
   });
 
+  it("rejects a valid access token when its session family has no active refresh token", async () => {
+    findActiveSessionToken.mockResolvedValue(null);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/__test/protected",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectAuthenticationError(response, 401, "SESSION_INVALID");
+
+    expect(findActiveSessionToken).toHaveBeenCalledWith({
+      where: {
+        user_id: TEST_USER_ID,
+        family_id: TEST_SESSION_ID,
+        auth_version_at_issue: 1,
+        revoked_at: null,
+        expires_at: {
+          gt: expect.any(Date),
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  });
+
   it("returns 503 when the account lookup fails", async () => {
     findUser.mockRejectedValue(new Error("Database unavailable"));
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/__test/protected",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectAuthenticationError(response, 503, "SERVICE_UNAVAILABLE");
+  });
+
+  it("returns 503 when the session lookup fails", async () => {
+    findActiveSessionToken.mockRejectedValue(new Error("Database unavailable"));
 
     const token = await makeAccessToken();
 
@@ -307,6 +365,7 @@ describe("Authentication plugin", () => {
         lastName: "Okafor",
         displayName: "Amina",
         authVersion: 1,
+        sessionId: TEST_SESSION_ID,
         roles: ["LEARNER", "CONTRIBUTOR"],
       },
     });

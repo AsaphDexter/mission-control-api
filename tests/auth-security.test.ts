@@ -11,6 +11,8 @@ import { generateOpaqueToken, hashOpaqueToken } from "../src/modules/auth/securi
 
 import { createAccessToken, verifyAccessToken } from "../src/modules/auth/security/access-token.js";
 
+const TEST_SESSION_ID = "f13c9c0a-3d24-4a77-a1b3-123456789abc";
+
 const previousSecret = process.env.JWT_ACCESS_SECRET;
 
 beforeAll(() => {
@@ -79,7 +81,11 @@ describe("Opaque tokens", () => {
 
 describe("JWT access tokens", () => {
   it("creates and verifies a signed access token", async () => {
-    const token = await createAccessToken("00000000-0000-4000-8000-000000000001", 1);
+    const token = await createAccessToken(
+      "00000000-0000-4000-8000-000000000001",
+      1,
+      TEST_SESSION_ID,
+    );
 
     const claims = await verifyAccessToken(token);
 
@@ -88,11 +94,16 @@ describe("JWT access tokens", () => {
       authVersion: 1,
     });
 
+    expect(claims.sessionId).toBe(TEST_SESSION_ID);
     expect(claims.expiresAt - claims.issuedAt).toBe(900);
   });
 
   it("rejects a tampered access token", async () => {
-    const token = await createAccessToken("00000000-0000-4000-8000-000000000001", 1);
+    const token = await createAccessToken(
+      "00000000-0000-4000-8000-000000000001",
+      1,
+      TEST_SESSION_ID,
+    );
 
     const tamperedToken = `${token.slice(0, 10)}x${token.slice(11)}`;
 
@@ -100,6 +111,8 @@ describe("JWT access tokens", () => {
   });
 
   it("rejects invalid authentication versions", async () => {
-    await expect(createAccessToken("00000000-0000-4000-8000-000000000001", 0)).rejects.toThrow();
+    await expect(
+      createAccessToken("00000000-0000-4000-8000-000000000001", 0, TEST_SESSION_ID),
+    ).rejects.toThrow();
   });
 });

@@ -575,7 +575,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
-        await logoutSession(authenticatedUser.id, { refreshToken }, { prisma: app.prisma });
+        await logoutSession(
+          authenticatedUser.id,
+          authenticatedUser.sessionId,
+          { refreshToken },
+          { prisma: app.prisma },
+        );
 
         return reply.code(204).send();
       } catch (error) {

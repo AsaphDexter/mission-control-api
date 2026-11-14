@@ -47,7 +47,7 @@ const activeStoredToken = () => ({
   id: "old-refresh-token-id",
   user_id: "test-user-id",
   token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
-  family_id: "test-token-family-id",
+  family_id: "f13c9c0a-3d24-4a77-a1b3-123456789abc",
   auth_version_at_issue: 1,
   expires_at: new Date(Date.now() + 60_000),
   revoked_at: null,
@@ -177,7 +177,7 @@ describe("POST /api/v1/auth/refresh", () => {
     expect(findActiveFamilyToken).toHaveBeenCalledWith({
       where: {
         user_id: "test-user-id",
-        family_id: "test-token-family-id",
+        family_id: "f13c9c0a-3d24-4a77-a1b3-123456789abc",
         revoked_at: null,
         expires_at: {
           gt: expect.any(Date),
@@ -262,7 +262,7 @@ describe("POST /api/v1/auth/refresh", () => {
         data: expect.objectContaining({
           user_id: "test-user-id",
           token_hash: hashOpaqueToken(body.data.refreshToken),
-          family_id: "test-token-family-id",
+          family_id: "f13c9c0a-3d24-4a77-a1b3-123456789abc",
           auth_version_at_issue: 1,
           expires_at: expect.any(Date),
         }),
@@ -383,7 +383,7 @@ describe("POST /api/v1/auth/refresh", () => {
     expect(updateRefreshTokenMany).toHaveBeenCalledWith({
       where: {
         user_id: "test-user-id",
-        family_id: "test-token-family-id",
+        family_id: "f13c9c0a-3d24-4a77-a1b3-123456789abc",
         revoked_at: null,
       },
       data: {

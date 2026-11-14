@@ -10,7 +10,10 @@ import {
   rotateRefreshToken,
 } from "../../src/modules/auth/refresh.service.js";
 
-import { logoutSession } from "../../src/modules/auth/logout.service.js";
+import {
+  LogoutSessionNotFoundError,
+  logoutSession,
+} from "../../src/modules/auth/logout.service.js";
 
 import {
   generateOpaqueToken,
@@ -135,6 +138,7 @@ describe("PostgreSQL auth session concurrency", () => {
       ),
       logoutSession(
         userId,
+        session.familyId,
         {
           refreshToken: session.raw,
         },
@@ -261,6 +265,7 @@ describe("PostgreSQL auth session concurrency", () => {
 
     await logoutSession(
       userId,
+      logoutTarget.familyId,
       {
         refreshToken: logoutTarget.raw,
       },
@@ -336,12 +341,76 @@ describe("PostgreSQL auth session concurrency", () => {
     expect(userAfterRefresh?.auth_version).toBe(1);
   });
 
+  it("rejects logout when the supplied refresh token belongs to another session family", async () => {
+    const userId = await createActiveUser();
+
+    // Session A represents the authenticated access token.
+    const sessionA = await createRefreshToken(userId);
+
+    // Session B represents the refresh token supplied in the logout request.
+    const sessionB = await createRefreshToken(userId);
+
+    await expect(
+      logoutSession(
+        userId,
+        sessionA.familyId,
+        {
+          refreshToken: sessionB.raw,
+        },
+        {
+          prisma,
+        },
+      ),
+    ).rejects.toBeInstanceOf(LogoutSessionNotFoundError);
+
+    // Session A must remain active.
+    const sessionAFamily = await prisma.refreshToken.findMany({
+      where: {
+        user_id: userId,
+        family_id: sessionA.familyId,
+      },
+      select: {
+        revoked_at: true,
+      },
+    });
+
+    expect(sessionAFamily).toHaveLength(1);
+    expect(sessionAFamily[0]?.revoked_at).toBeNull();
+
+    // Session B must also remain active.
+    const sessionBFamily = await prisma.refreshToken.findMany({
+      where: {
+        user_id: userId,
+        family_id: sessionB.familyId,
+      },
+      select: {
+        revoked_at: true,
+      },
+    });
+
+    expect(sessionBFamily).toHaveLength(1);
+    expect(sessionBFamily[0]?.revoked_at).toBeNull();
+
+    // A failed cross-session logout must not invalidate the account globally.
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        auth_version: true,
+      },
+    });
+
+    expect(user?.auth_version).toBe(1);
+  });
+
   it("treats a previously logged-out token as invalid, not as token reuse", async () => {
     const userId = await createActiveUser();
     const session = await createRefreshToken(userId);
 
     await logoutSession(
       userId,
+      session.familyId,
       {
         refreshToken: session.raw,
       },
@@ -392,6 +461,7 @@ describe("PostgreSQL auth session concurrency", () => {
     // Log out using the replacement token, revoking the entire old family.
     await logoutSession(
       userId,
+      originalSession.familyId,
       {
         refreshToken: rotation.refreshToken,
       },

@@ -8,9 +8,14 @@ import { hashOpaqueToken } from "../src/modules/auth/security/opaque-token.js";
 const TEST_USER_ID = "8e1c9c0a-3d24-4a77-a1b3-123456789abc";
 const OTHER_USER_ID = "7a2c9c0a-3d24-4a77-a1b3-123456789def";
 const RAW_REFRESH_TOKEN = "L".repeat(43);
-const TOKEN_FAMILY_ID = "5a3c9c0a-3d24-4a77-a1b3-123456789abc";
+const TOKEN_FAMILY_ID = "f13c9c0a-3d24-4a77-a1b3-123456789abc";
+const OTHER_SESSION_FAMILY_ID = "a13c9c0a-3d24-4a77-a1b3-123456789abc";
+const OTHER_RAW_REFRESH_TOKEN = "B".repeat(43);
+
+const activeSessionFamilyIds = new Set<string>();
 
 const findAuthenticatedUser = vi.fn();
+const findActiveSessionToken = vi.fn();
 const findStoredToken = vi.fn();
 const findRefreshToken = vi.fn();
 const lockUserRow = vi.fn();
@@ -38,6 +43,9 @@ const runTransaction = vi.fn(
 const prismaMock = {
   user: {
     findUnique: findAuthenticatedUser,
+  },
+  refreshToken: {
+    findFirst: findActiveSessionToken,
   },
   $transaction: runTransaction,
   $disconnect: disconnect,
@@ -88,14 +96,34 @@ describe("POST /api/v1/auth/logout", () => {
     process.env.JWT_ACCESS_SECRET = Buffer.alloc(32, 0x73).toString("base64url");
 
     findAuthenticatedUser.mockReset().mockResolvedValue(activeUser());
+
+    activeSessionFamilyIds.clear();
+    activeSessionFamilyIds.add(TOKEN_FAMILY_ID);
+
+    findActiveSessionToken.mockReset().mockImplementation(
+      async (args: { where: { family_id: string } }) => {
+        return activeSessionFamilyIds.has(args.where.family_id)
+          ? { id: "active-test-refresh-token" }
+          : null;
+      },
+    );
+
     findStoredToken.mockReset().mockResolvedValue(storedToken());
     findRefreshToken.mockReset().mockResolvedValue(null);
     incrementUserAuthVersion.mockReset().mockResolvedValue({});
     lockUserRow.mockReset().mockResolvedValue([{ id: TEST_USER_ID }]);
 
-    revokeFamilyTokens.mockReset().mockResolvedValue({
-      count: 2,
-    });
+    revokeFamilyTokens.mockReset().mockImplementation(
+      async (args: { where: { family_id: string } }) => {
+        const wasActive = activeSessionFamilyIds.has(args.where.family_id);
+
+        activeSessionFamilyIds.delete(args.where.family_id);
+
+        return {
+          count: wasActive ? 2 : 0,
+        };
+      },
+    );
 
     disconnect.mockReset().mockResolvedValue(undefined);
 
@@ -121,8 +149,10 @@ describe("POST /api/v1/auth/logout", () => {
     await app.close();
   });
 
-  async function makeAccessToken(): Promise<string> {
-    return createAccessToken(TEST_USER_ID, 1);
+  async function makeAccessToken(
+    sessionId = TOKEN_FAMILY_ID,
+  ): Promise<string> {
+    return createAccessToken(TEST_USER_ID, 1, sessionId);
   }
 
   it("revokes the authenticated user's refresh-token family", async () => {
@@ -146,9 +176,25 @@ describe("POST /api/v1/auth/logout", () => {
       where: {
         token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
         user_id: TEST_USER_ID,
+        family_id: TOKEN_FAMILY_ID,
       },
       select: {
         family_id: true,
+      },
+    });
+
+    expect(findActiveSessionToken).toHaveBeenCalledWith({
+      where: {
+        user_id: TEST_USER_ID,
+        family_id: TOKEN_FAMILY_ID,
+        auth_version_at_issue: 1,
+        revoked_at: null,
+        expires_at: {
+          gt: expect.any(Date),
+        },
+      },
+      select: {
+        id: true,
       },
     });
 
@@ -268,6 +314,7 @@ describe("POST /api/v1/auth/logout", () => {
       where: {
         token_hash: hashOpaqueToken(RAW_REFRESH_TOKEN),
         user_id: TEST_USER_ID,
+        family_id: TOKEN_FAMILY_ID,
       },
       select: {
         family_id: true,
@@ -277,10 +324,63 @@ describe("POST /api/v1/auth/logout", () => {
     expect(revokeFamilyTokens).not.toHaveBeenCalled();
   });
 
-  it("returns 204 when the session family has already been revoked", async () => {
-    revokeFamilyTokens.mockResolvedValue({
-      count: 0,
+  it("does not allow one device to log out another device's session", async () => {
+    activeSessionFamilyIds.add(OTHER_SESSION_FAMILY_ID);
+
+    findStoredToken.mockResolvedValue(null);
+
+    const accessToken = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+      payload: {
+        refreshToken: OTHER_RAW_REFRESH_TOKEN,
+      },
     });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("LOGOUT_SESSION_NOT_FOUND");
+
+    expect(findStoredToken).toHaveBeenCalledWith({
+      where: {
+        token_hash: hashOpaqueToken(OTHER_RAW_REFRESH_TOKEN),
+        user_id: TEST_USER_ID,
+        family_id: TOKEN_FAMILY_ID,
+      },
+      select: {
+        family_id: true,
+      },
+    });
+
+    expect(revokeFamilyTokens).not.toHaveBeenCalled();
+
+    const otherDeviceToken = await makeAccessToken(OTHER_SESSION_FAMILY_ID);
+
+    const otherDeviceResponse = await app.inject({
+      method: "GET",
+      url: "/__test/protected",
+      headers: {
+        authorization: `Bearer ${otherDeviceToken}`,
+      },
+    });
+
+    expect(otherDeviceResponse.statusCode).toBe(200);
+  });
+
+  it("returns 204 when another logout revokes the family after authentication", async () => {
+    revokeFamilyTokens.mockImplementationOnce(
+      async (args: { where: { family_id: string } }) => {
+        activeSessionFamilyIds.delete(args.where.family_id);
+
+        return {
+          count: 0,
+        };
+      },
+    );
 
     const accessToken = await makeAccessToken();
 
@@ -359,20 +459,21 @@ describe("POST /api/v1/auth/logout", () => {
     expect(refreshResponse.statusCode).toBe(401);
     expect(refreshResponse.json().error.code).toBe("INVALID_REFRESH_TOKEN");
 
-    // Logout revoked the family once. Replay must not trigger
-    // another family revocation or account-wide invalidation.
     expect(revokeFamilyTokens).toHaveBeenCalledOnce();
     expect(incrementUserAuthVersion).not.toHaveBeenCalled();
   });
 
-  it("allows the existing access token until expiry after ordinary logout", async () => {
-    const accessToken = await makeAccessToken();
+  it("invalidates the logged-out device while preserving a sibling session", async () => {
+    activeSessionFamilyIds.add(OTHER_SESSION_FAMILY_ID);
+
+    const deviceAAccessToken = await makeAccessToken();
+    const deviceBAccessToken = await makeAccessToken(OTHER_SESSION_FAMILY_ID);
 
     const logoutResponse = await app.inject({
       method: "POST",
       url: "/api/v1/auth/logout",
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        authorization: `Bearer ${deviceAAccessToken}`,
       },
       payload: {
         refreshToken: RAW_REFRESH_TOKEN,
@@ -381,18 +482,32 @@ describe("POST /api/v1/auth/logout", () => {
 
     expect(logoutResponse.statusCode).toBe(204);
 
-    const protectedResponse = await app.inject({
+    const deviceAResponse = await app.inject({
       method: "GET",
       url: "/__test/protected",
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        authorization: `Bearer ${deviceAAccessToken}`,
       },
     });
 
-    expect(protectedResponse.statusCode).toBe(200);
-    expect(protectedResponse.json()).toStrictEqual({
+    expect(deviceAResponse.statusCode).toBe(401);
+    expect(deviceAResponse.json().error.code).toBe("SESSION_INVALID");
+
+    const deviceBResponse = await app.inject({
+      method: "GET",
+      url: "/__test/protected",
+      headers: {
+        authorization: `Bearer ${deviceBAccessToken}`,
+      },
+    });
+
+    expect(deviceBResponse.statusCode).toBe(200);
+    expect(deviceBResponse.json()).toStrictEqual({
       userId: TEST_USER_ID,
     });
+
+    expect(activeSessionFamilyIds.has(TOKEN_FAMILY_ID)).toBe(false);
+    expect(activeSessionFamilyIds.has(OTHER_SESSION_FAMILY_ID)).toBe(true);
 
     expect(incrementUserAuthVersion).not.toHaveBeenCalled();
   });

@@ -12,6 +12,7 @@ export interface AuthenticatedUser {
   lastName: string;
   displayName: string | null;
   authVersion: number;
+  sessionId: string;
   roles: string[];
 }
 
@@ -151,6 +152,47 @@ export function registerAuthentication(app: FastifyInstance): void {
         return;
       }
 
+      let activeSessionToken;
+
+      try {
+        activeSessionToken = await app.prisma.refreshToken.findFirst({
+          where: {
+            user_id: user.id,
+            family_id: claims.sessionId,
+            auth_version_at_issue: claims.authVersion,
+            revoked_at: null,
+            expires_at: {
+              gt: new Date(),
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+      } catch (error) {
+        request.log.error({ err: error }, "Could not validate the authenticated session.");
+
+        sendAuthenticationError(
+          reply,
+          request.id,
+          503,
+          "SERVICE_UNAVAILABLE",
+          "Authentication is temporarily unavailable.",
+        );
+        return;
+      }
+
+      if (!activeSessionToken) {
+        sendAuthenticationError(
+          reply,
+          request.id,
+          401,
+          "SESSION_INVALID",
+          "The account session is no longer valid. Please authenticate again.",
+        );
+        return;
+      }
+
       request.authenticatedUser = {
         id: user.id,
         email: user.email,
@@ -158,6 +200,7 @@ export function registerAuthentication(app: FastifyInstance): void {
         lastName: user.last_name,
         displayName: user.display_name,
         authVersion: user.auth_version,
+        sessionId: claims.sessionId,
         roles: user.user_roles.map((userRole) => userRole.role.code),
       };
     },

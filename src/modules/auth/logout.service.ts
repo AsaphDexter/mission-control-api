@@ -20,6 +20,7 @@ export class LogoutSessionNotFoundError extends Error {
 
 export async function logoutSession(
   userId: string,
+  sessionId: string,
   input: LogoutInput,
   dependencies: LogoutDependencies,
 ): Promise<void> {
@@ -40,11 +41,12 @@ export async function logoutSession(
       return false;
     }
 
-    // Scope the token lookup to the authenticated account.
+    // Require the refresh token to belong to this exact authenticated session.
     const storedToken = await transaction.refreshToken.findFirst({
       where: {
         token_hash: tokenHash,
         user_id: userId,
+        family_id: sessionId,
       },
       select: {
         family_id: true,
@@ -55,11 +57,11 @@ export async function logoutSession(
       return false;
     }
 
-    // Revoke every active token in this session family.
+    // Revoke every active token in the authenticated session family only.
     await transaction.refreshToken.updateMany({
       where: {
         user_id: userId,
-        family_id: storedToken.family_id,
+        family_id: sessionId,
         revoked_at: null,
       },
       data: {
