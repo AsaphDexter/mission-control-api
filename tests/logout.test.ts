@@ -100,21 +100,22 @@ describe("POST /api/v1/auth/logout", () => {
     activeSessionFamilyIds.clear();
     activeSessionFamilyIds.add(TOKEN_FAMILY_ID);
 
-    findActiveSessionToken.mockReset().mockImplementation(
-      async (args: { where: { family_id: string } }) => {
+    findActiveSessionToken
+      .mockReset()
+      .mockImplementation(async (args: { where: { family_id: string } }) => {
         return activeSessionFamilyIds.has(args.where.family_id)
           ? { id: "active-test-refresh-token" }
           : null;
-      },
-    );
+      });
 
     findStoredToken.mockReset().mockResolvedValue(storedToken());
     findRefreshToken.mockReset().mockResolvedValue(null);
     incrementUserAuthVersion.mockReset().mockResolvedValue({});
     lockUserRow.mockReset().mockResolvedValue([{ id: TEST_USER_ID }]);
 
-    revokeFamilyTokens.mockReset().mockImplementation(
-      async (args: { where: { family_id: string } }) => {
+    revokeFamilyTokens
+      .mockReset()
+      .mockImplementation(async (args: { where: { family_id: string } }) => {
         const wasActive = activeSessionFamilyIds.has(args.where.family_id);
 
         activeSessionFamilyIds.delete(args.where.family_id);
@@ -122,8 +123,7 @@ describe("POST /api/v1/auth/logout", () => {
         return {
           count: wasActive ? 2 : 0,
         };
-      },
-    );
+      });
 
     disconnect.mockReset().mockResolvedValue(undefined);
 
@@ -149,9 +149,7 @@ describe("POST /api/v1/auth/logout", () => {
     await app.close();
   });
 
-  async function makeAccessToken(
-    sessionId = TOKEN_FAMILY_ID,
-  ): Promise<string> {
+  async function makeAccessToken(sessionId = TOKEN_FAMILY_ID): Promise<string> {
     return createAccessToken(TEST_USER_ID, 1, sessionId);
   }
 
@@ -372,15 +370,13 @@ describe("POST /api/v1/auth/logout", () => {
   });
 
   it("returns 204 when another logout revokes the family after authentication", async () => {
-    revokeFamilyTokens.mockImplementationOnce(
-      async (args: { where: { family_id: string } }) => {
-        activeSessionFamilyIds.delete(args.where.family_id);
+    revokeFamilyTokens.mockImplementationOnce(async (args: { where: { family_id: string } }) => {
+      activeSessionFamilyIds.delete(args.where.family_id);
 
-        return {
-          count: 0,
-        };
-      },
-    );
+      return {
+        count: 0,
+      };
+    });
 
     const accessToken = await makeAccessToken();
 

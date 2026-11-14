@@ -70,9 +70,7 @@ describe("Authentication plugin", () => {
 
     findUser.mockReset().mockResolvedValue(activeUser());
 
-    findActiveSessionToken
-      .mockReset()
-      .mockResolvedValue({ id: "test-refresh-token-id" });
+    findActiveSessionToken.mockReset().mockResolvedValue({ id: "test-refresh-token-id" });
 
     disconnect.mockReset().mockResolvedValue(undefined);
 
