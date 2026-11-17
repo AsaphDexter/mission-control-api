@@ -72,8 +72,10 @@ describe("Password reset request service", () => {
   });
 
   it("creates a hashed reset token and sends it after the transaction commits", async () => {
-    const sendPasswordResetEmail = vi.fn(async (_message: PasswordResetEmailMessage) => {
+    const sendPasswordResetEmail = vi.fn(async (message: PasswordResetEmailMessage) => {
       expect(transactionCommitted).toBe(true);
+      expect(message.email).toBe("amina@example.com");
+      expect(message.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     });
 
     const result = await requestPasswordReset("  AMINA@EXAMPLE.COM  ", {
