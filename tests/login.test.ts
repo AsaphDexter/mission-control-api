@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/app.js";
 import { hashOpaqueToken } from "../src/modules/auth/security/opaque-token.js";

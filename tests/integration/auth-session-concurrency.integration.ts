@@ -20,6 +20,13 @@ import {
   hashOpaqueToken,
 } from "../../src/modules/auth/security/opaque-token.js";
 
+import {
+  InvalidPasswordResetTokenError,
+  resetPassword,
+} from "../../src/modules/auth/password-reset.service.js";
+
+import { hashPassword, verifyPassword } from "../../src/modules/auth/security/password.js";
+
 // These integration tests must never run against the hosted development
 // database or any production database.
 const databaseUrl = process.env.DATABASE_URL;
@@ -93,6 +100,12 @@ describe("PostgreSQL auth session concurrency", () => {
     if (!activeUserId) {
       return;
     }
+
+    await prisma.passwordResetToken.deleteMany({
+      where: {
+        user_id: activeUserId,
+      },
+    });
 
     // Clear self-referencing replacement links before deleting the tokens.
     await prisma.refreshToken.updateMany({
@@ -530,5 +543,125 @@ describe("PostgreSQL auth session concurrency", () => {
     });
 
     expect(user?.auth_version).toBe(1);
+  });
+
+  it("allows only one concurrent password reset and invalidates all account sessions", async () => {
+    const userId = await createActiveUser();
+
+    const initialPassword = "Initial-Password-2026!";
+    const newPassword = "Updated-Password-2026!";
+
+    await prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        password_hash: await hashPassword(initialPassword),
+      },
+    });
+
+    const rawResetToken = generateOpaqueToken();
+    const rawOutstandingToken = generateOpaqueToken();
+
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+    await prisma.passwordResetToken.create({
+      data: {
+        user_id: userId,
+        token_hash: hashOpaqueToken(rawResetToken),
+        expires_at: expiresAt,
+      },
+    });
+
+    // A second outstanding token must also be invalidated by the reset.
+    await prisma.passwordResetToken.create({
+      data: {
+        user_id: userId,
+        token_hash: hashOpaqueToken(rawOutstandingToken),
+        expires_at: expiresAt,
+      },
+    });
+
+    // Create two active device sessions for the same account.
+    await createRefreshToken(userId);
+    await createRefreshToken(userId);
+
+    const resetAttempts = await Promise.allSettled([
+      resetPassword(
+        {
+          token: rawResetToken,
+          newPassword,
+        },
+        {
+          prisma,
+        },
+      ),
+      resetPassword(
+        {
+          token: rawResetToken,
+          newPassword,
+        },
+        {
+          prisma,
+        },
+      ),
+    ]);
+
+    const successfulResets = resetAttempts.filter((outcome) => outcome.status === "fulfilled");
+
+    const rejectedResets = resetAttempts.filter((outcome) => outcome.status === "rejected");
+
+    expect(successfulResets).toHaveLength(1);
+    expect(rejectedResets).toHaveLength(1);
+
+    const rejectedReset = rejectedResets[0];
+
+    if (rejectedReset?.status === "rejected") {
+      expect(rejectedReset.reason).toBeInstanceOf(InvalidPasswordResetTokenError);
+    }
+
+    // Verify that the password was changed exactly once.
+    const updatedUser = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        password_hash: true,
+        auth_version: true,
+      },
+    });
+
+    expect(updatedUser).not.toBeNull();
+    expect(updatedUser?.auth_version).toBe(2);
+
+    expect(await verifyPassword(newPassword, updatedUser!.password_hash)).toBe(true);
+
+    expect(await verifyPassword(initialPassword, updatedUser!.password_hash)).toBe(false);
+
+    // Both the used token and all other pending reset tokens must be consumed.
+    const resetTokens = await prisma.passwordResetToken.findMany({
+      where: {
+        user_id: userId,
+      },
+      select: {
+        consumed_at: true,
+      },
+    });
+
+    expect(resetTokens).toHaveLength(2);
+    expect(resetTokens.every((token) => token.consumed_at !== null)).toBe(true);
+
+    // Password reset must revoke every active device session.
+    const refreshTokens = await prisma.refreshToken.findMany({
+      where: {
+        user_id: userId,
+      },
+      select: {
+        revoked_at: true,
+      },
+    });
+
+    expect(refreshTokens).toHaveLength(2);
+    expect(refreshTokens.every((token) => token.revoked_at !== null)).toBe(true);
   });
 });
