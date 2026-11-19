@@ -6,6 +6,7 @@ import { registerDatabase } from "./plugins/database.plugin.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { registerAuthentication } from "./plugins/authentication.plugin.js";
 import type { PasswordResetEmailSender } from "./modules/auth/password-reset-request.service.js";
+import { registerAuthorization } from "./plugins/authorization.plugin.js";
 
 type AppOptions = Pick<FastifyServerOptions, "logger"> & {
   prisma: PrismaClient;
@@ -29,6 +30,7 @@ export function buildApp(options: AppOptions) {
 
   registerDatabase(app, prisma);
   registerAuthentication(app);
+  registerAuthorization(app);
 
   // Register rate limiting before routes so route-level limits are applied.
   app.register(rateLimit, {
