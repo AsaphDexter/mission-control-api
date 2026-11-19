@@ -14,6 +14,15 @@ import {
 
 import { resendVerificationEmail } from "./resend-verification.service.js";
 
+import {
+  requestPasswordReset,
+  type PasswordResetEmailSender,
+} from "./password-reset-request.service.js";
+
+import { InvalidPasswordResetTokenError, resetPassword } from "./password-reset.service.js";
+
+import { PasswordPolicyError } from "./security/password.js";
+
 import { InvalidCredentialsError, loginUser, type LoginInput } from "./login.service.js";
 
 import {
@@ -148,7 +157,23 @@ const verifyEmailSchema = {
   },
 } as const;
 
-export async function authRoutes(app: FastifyInstance): Promise<void> {
+interface AuthRoutesOptions {
+  sendPasswordResetEmail?: PasswordResetEmailSender;
+}
+
+interface ForgotPasswordBody {
+  email: string;
+}
+
+interface ResetPasswordBody {
+  token: string;
+  newPassword: string;
+}
+
+export async function authRoutes(
+  app: FastifyInstance,
+  options: AuthRoutesOptions = {},
+): Promise<void> {
   // 1. Existing Registration Route
   app.post<{ Body: RegistrationInput }>(
     "/api/v1/auth/register",
@@ -362,6 +387,187 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
               request.id,
               "INTERNAL_SERVER_ERROR",
               "An unexpected error occurred while processing the request.",
+            ),
+          );
+      }
+    },
+  );
+
+  app.post<{ Body: ForgotPasswordBody }>(
+    "/api/v1/auth/forgot-password",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: 15 * 60 * 1000,
+        },
+      },
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["email"],
+          properties: {
+            email: {
+              type: "string",
+              format: "email",
+              maxLength: 254,
+            },
+          },
+        },
+      },
+      attachValidation: true,
+    },
+    async (request, reply) => {
+      const email = (request.body as { email?: unknown } | undefined)?.email;
+
+      if (request.validationError || typeof email !== "string") {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(request.id, "VALIDATION_ERROR", "A valid email address is required."),
+          );
+      }
+
+      try {
+        const result = await requestPasswordReset(email, {
+          prisma: app.prisma,
+          ...(options.sendPasswordResetEmail
+            ? { sendPasswordResetEmail: options.sendPasswordResetEmail }
+            : {}),
+        });
+
+        if (result.delivery === "failed" || result.delivery === "not_configured") {
+          request.log.warn(
+            {
+              userId: result.userId,
+              delivery: result.delivery,
+            },
+            "Password reset email was not delivered.",
+          );
+        }
+
+        // Do not disclose whether an account exists or is eligible.
+        return reply.code(202).send({
+          data: {
+            message: "If the address is eligible, password reset instructions will be sent.",
+          },
+          meta: {
+            requestId: request.id,
+          },
+        });
+      } catch (error) {
+        request.log.error({ err: error }, "Password reset request failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while processing the request.",
+            ),
+          );
+      }
+    },
+  );
+
+  app.post<{ Body: ResetPasswordBody }>(
+    "/api/v1/auth/reset-password",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: 15 * 60 * 1000,
+        },
+      },
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["token", "newPassword"],
+          properties: {
+            token: {
+              type: "string",
+              minLength: 43,
+              maxLength: 43,
+              pattern: "^[A-Za-z0-9_-]{43}$",
+            },
+            newPassword: {
+              type: "string",
+              minLength: 12,
+              maxLength: 128,
+              format: "password",
+            },
+          },
+        },
+      },
+      attachValidation: true,
+    },
+    async (request, reply) => {
+      const body = request.body as { token?: unknown; newPassword?: unknown } | undefined;
+
+      if (
+        request.validationError ||
+        typeof body?.token !== "string" ||
+        typeof body.newPassword !== "string"
+      ) {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              request.id,
+              "VALIDATION_ERROR",
+              "A valid reset token and new password are required.",
+            ),
+          );
+      }
+
+      try {
+        await resetPassword(
+          {
+            token: body.token,
+            newPassword: body.newPassword,
+          },
+          {
+            prisma: app.prisma,
+          },
+        );
+
+        return reply.code(200).send({
+          data: {
+            message: "Your password has been reset successfully. Please sign in again.",
+          },
+          meta: {
+            requestId: request.id,
+          },
+        });
+      } catch (error) {
+        if (error instanceof InvalidPasswordResetTokenError) {
+          return reply
+            .code(400)
+            .send(
+              errorResponse(
+                request.id,
+                "INVALID_PASSWORD_RESET_TOKEN",
+                "The password reset token is invalid, expired or has already been used.",
+              ),
+            );
+        }
+
+        if (error instanceof PasswordPolicyError) {
+          return reply.code(400).send(errorResponse(request.id, "VALIDATION_ERROR", error.message));
+        }
+
+        request.log.error({ err: error }, "Password reset failed.");
+
+        return reply
+          .code(500)
+          .send(
+            errorResponse(
+              request.id,
+              "INTERNAL_SERVER_ERROR",
+              "An unexpected error occurred while resetting the password.",
             ),
           );
       }
