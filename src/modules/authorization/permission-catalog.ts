@@ -44,6 +44,10 @@ export const PERMISSION_CATALOG = [
     code: "resources.archive",
     description: "Archive learning resources.",
   },
+  {
+    code: "resources.categories.manage",
+    description: "Create, update and deactivate learning resource categories.",
+  },
 
   {
     code: "challenges.read.published",
@@ -170,6 +174,7 @@ const ADMINISTRATOR_PERMISSIONS = [
   "resources.review",
   "resources.publish",
   "resources.archive",
+  "resources.categories.manage",
 
   "challenges.read.all",
   "challenges.review",

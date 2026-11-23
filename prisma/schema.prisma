@@ -29,6 +29,7 @@ enum ContentRevisionStatus {
   REJECTED
   SUPERSEDED
   ARCHIVED
+  APPROVED
 
   @@map("content_revision_status")
 }
