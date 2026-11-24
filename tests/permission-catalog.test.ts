@@ -54,4 +54,12 @@ describe("RBAC permission catalogue", () => {
   it("does not expose administrator-role assignment as an ordinary permission", () => {
     expect(catalogCodes.has("users.assign.admin_role")).toBe(false);
   });
+
+  it("grants resource category management only to Administrators", () => {
+    expect(ROLE_PERMISSION_CODES.LEARNER).not.toContain("resources.categories.manage");
+
+    expect(ROLE_PERMISSION_CODES.CONTRIBUTOR).not.toContain("resources.categories.manage");
+
+    expect(ROLE_PERMISSION_CODES.ADMINISTRATOR).toContain("resources.categories.manage");
+  });
 });
