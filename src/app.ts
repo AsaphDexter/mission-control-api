@@ -8,6 +8,7 @@ import { registerAuthentication } from "./plugins/authentication.plugin.js";
 import type { PasswordResetEmailSender } from "./modules/auth/password-reset-request.service.js";
 import { registerAuthorization } from "./plugins/authorization.plugin.js";
 import { resourceCategoryRoutes } from "./modules/resources/category.routes.js";
+import { resourceRoutes } from "./modules/resources/resource.routes.js";
 
 type AppOptions = Pick<FastifyServerOptions, "logger"> & {
   prisma: PrismaClient;
@@ -51,6 +52,7 @@ export function buildApp(options: AppOptions) {
     sendPasswordResetEmail,
   });
   app.register(resourceCategoryRoutes);
+  app.register(resourceRoutes);
 
   return app;
 }
