@@ -19,6 +19,10 @@ const findUser = vi.fn();
 const findActiveSessionToken = vi.fn();
 const findRolePermissions = vi.fn();
 
+const findResourceCount = vi.fn();
+const findResources = vi.fn();
+const findResourceById = vi.fn();
+
 const findActiveCategory = vi.fn();
 const createResourceRecord = vi.fn();
 const createRevisionRecord = vi.fn();
@@ -51,6 +55,11 @@ const prismaMock = {
   },
   rolePermission: {
     findMany: findRolePermissions,
+  },
+  resource: {
+    count: findResourceCount,
+    findMany: findResources,
+    findUnique: findResourceById,
   },
   $transaction: runTransaction,
   $disconnect: disconnect,
@@ -86,6 +95,26 @@ const REVISION = {
   created_at: CREATED_AT,
   updated_at: CREATED_AT,
   category: CATEGORY,
+};
+
+const PUBLISHED_REVISION = {
+  ...REVISION,
+  id: "7e1c9c0a-3d24-4a77-a1b3-123456789abc",
+  status: "PUBLISHED",
+  published_at: CREATED_AT,
+};
+
+const DRAFT_REVISION = {
+  ...REVISION,
+  id: "9e1c9c0a-3d24-4a77-a1b3-123456789abc",
+  revision_number: 2,
+  title: "Advanced API Testing",
+  status: "DRAFT",
+};
+
+const RESOURCE_WITH_REVISIONS = {
+  ...RESOURCE,
+  revisions: [DRAFT_REVISION, PUBLISHED_REVISION],
 };
 
 const VALID_PAYLOAD = {
@@ -143,6 +172,10 @@ describe("Resource HTTP routes", () => {
     });
 
     findRolePermissions.mockReset().mockResolvedValue([]);
+
+    findResourceCount.mockReset().mockResolvedValue(0);
+    findResources.mockReset().mockResolvedValue([]);
+    findResourceById.mockReset().mockResolvedValue(RESOURCE_WITH_REVISIONS);
 
     findActiveCategory.mockReset().mockResolvedValue(CATEGORY);
     createResourceRecord.mockReset().mockResolvedValue(RESOURCE);
@@ -481,5 +514,319 @@ describe("Resource HTTP routes", () => {
     expect(createResourceRecord).toHaveBeenCalledOnce();
     expect(createRevisionRecord).toHaveBeenCalledOnce();
     expect(createAuditRecord).toHaveBeenCalledOnce();
+  });
+
+  it("lists published resources with pagination and exposes only published revisions", async () => {
+    grantPermissions("resources.read.published");
+
+    findResourceCount.mockResolvedValue(1);
+    findResources.mockResolvedValue([
+      {
+        ...RESOURCE_WITH_REVISIONS,
+        revisions: [PUBLISHED_REVISION],
+      },
+    ]);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/resources?limit=10&offset=5",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+
+    expect(body.data.resources).toHaveLength(1);
+    expect(body.data.resources[0]).toMatchObject({
+      id: RESOURCE_ID,
+      latestRevision: {
+        id: PUBLISHED_REVISION.id,
+        revisionNumber: 1,
+        title: PUBLISHED_REVISION.title,
+        status: "PUBLISHED",
+      },
+    });
+
+    expect(body.data.resources[0].latestRevision.status).not.toBe("DRAFT");
+    expect(body.meta.pagination).toEqual({
+      limit: 10,
+      offset: 5,
+      total: 1,
+    });
+
+    expect(findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 5,
+        take: 10,
+      }),
+    );
+  });
+
+  it("rejects published-resource listing without read permission", async () => {
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/resources",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectError(response, 403, "FORBIDDEN");
+
+    expect(findResourceCount).not.toHaveBeenCalled();
+    expect(findResources).not.toHaveBeenCalled();
+  });
+
+  it("lists the authenticated contributor's own resources, including drafts", async () => {
+    grantPermissions("resources.read.own");
+
+    findResourceCount.mockResolvedValue(1);
+    findResources.mockResolvedValue([RESOURCE_WITH_REVISIONS]);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/resources/mine?limit=15&offset=2",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+
+    expect(body.data.resources).toHaveLength(1);
+    expect(body.data.resources[0]).toMatchObject({
+      id: RESOURCE_ID,
+      latestRevision: {
+        id: DRAFT_REVISION.id,
+        title: "Advanced API Testing",
+        status: "DRAFT",
+      },
+    });
+
+    expect(body.meta.pagination).toEqual({
+      limit: 15,
+      offset: 2,
+      total: 1,
+    });
+
+    expect(findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          created_by: TEST_USER_ID,
+        },
+        skip: 2,
+        take: 15,
+      }),
+    );
+  });
+
+  it("allows administrators to list resources across all owners", async () => {
+    findUser.mockResolvedValue(activeUser("ADMINISTRATOR"));
+    grantPermissions("resources.read.all");
+
+    const otherUserResourceId = "ae1c9c0a-3d24-4a77-a1b3-123456789abc";
+
+    findResourceCount.mockResolvedValue(2);
+    findResources.mockResolvedValue([
+      RESOURCE_WITH_REVISIONS,
+      {
+        ...RESOURCE,
+        id: otherUserResourceId,
+        created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+        archived_at: CREATED_AT,
+        revisions: [
+          {
+            ...PUBLISHED_REVISION,
+            id: "ce1c9c0a-3d24-4a77-a1b3-123456789abc",
+            resource_id: otherUserResourceId,
+          },
+        ],
+      },
+    ]);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/resources/all",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+
+    expect(body.data.resources).toHaveLength(2);
+    expect(body.data.resources.map((resource: { id: string }) => resource.id)).toEqual([
+      RESOURCE_ID,
+      otherUserResourceId,
+    ]);
+
+    expect(body.data.resources[1].archivedAt).toBe(CREATED_AT.toISOString());
+
+    expect(findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 0,
+        take: 20,
+      }),
+    );
+
+    expect(findResources.mock.calls[0]?.[0]).not.toHaveProperty("where");
+  });
+
+  it("returns only published revisions to published-only readers", async () => {
+    grantPermissions("resources.read.published");
+    findResourceById.mockResolvedValue(RESOURCE_WITH_REVISIONS);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/resources/${RESOURCE_ID}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    const revisions = body.data.resource.revisions;
+
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({
+      id: PUBLISHED_REVISION.id,
+      title: PUBLISHED_REVISION.title,
+      status: "PUBLISHED",
+    });
+
+    expect(revisions.some((revision: { status: string }) => revision.status === "DRAFT")).toBe(
+      false,
+    );
+  });
+
+  it("allows resource owners with read.own permission to see all revisions", async () => {
+    grantPermissions("resources.read.own");
+    findResourceById.mockResolvedValue(RESOURCE_WITH_REVISIONS);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/resources/${RESOURCE_ID}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    const revisions = body.data.resource.revisions;
+
+    expect(revisions).toHaveLength(2);
+    expect(revisions.map((revision: { status: string }) => revision.status)).toEqual([
+      "DRAFT",
+      "PUBLISHED",
+    ]);
+  });
+
+  it("hides another contributor's unpublished resource from an ordinary owner", async () => {
+    grantPermissions("resources.read.own");
+
+    findResourceById.mockResolvedValue({
+      ...RESOURCE_WITH_REVISIONS,
+      created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+      revisions: [DRAFT_REVISION],
+    });
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/resources/${RESOURCE_ID}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectError(response, 404, "RESOURCE_NOT_FOUND");
+  });
+
+  it("returns HTTP 404 when the requested resource does not exist", async () => {
+    grantPermissions("resources.read.published");
+    findResourceById.mockResolvedValue(null);
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/resources/${RESOURCE_ID}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectError(response, 404, "RESOURCE_NOT_FOUND");
+  });
+
+  it("allows administrators to inspect all revisions across resource owners", async () => {
+    findUser.mockResolvedValue(activeUser("ADMINISTRATOR"));
+    grantPermissions("resources.read.all");
+
+    findResourceById.mockResolvedValue({
+      ...RESOURCE_WITH_REVISIONS,
+      created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+    });
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/resources/${RESOURCE_ID}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const revisions = response.json().data.resource.revisions;
+
+    expect(revisions).toHaveLength(2);
+    expect(revisions.map((revision: { status: string }) => revision.status)).toEqual([
+      "DRAFT",
+      "PUBLISHED",
+    ]);
+  });
+
+  it("rejects malformed resource IDs", async () => {
+    grantPermissions("resources.read.published");
+
+    const token = await makeAccessToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/resources/not-a-valid-uuid",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expectError(response, 400, "VALIDATION_ERROR");
+    expect(findResourceById).not.toHaveBeenCalled();
   });
 });

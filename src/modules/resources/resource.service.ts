@@ -1,5 +1,9 @@
 import type { PrismaClient } from "../../generated/prisma/client.js";
-import { InvalidResourceInputError, ResourceCategoryUnavailableError } from "./resource.errors.js";
+import {
+  InvalidResourceInputError,
+  ResourceCategoryUnavailableError,
+  ResourceNotFoundError,
+} from "./resource.errors.js";
 
 export interface CreateResourceInput {
   categoryId: string;
@@ -152,4 +156,227 @@ export async function createResource(
       revision,
     };
   });
+}
+
+export interface ResourcePaginationInput {
+  limit: number;
+  offset: number;
+}
+
+export interface ResourceReadContext {
+  userId: string;
+  canReadOwn: boolean;
+  canReadAll: boolean;
+}
+
+const RESOURCE_SUMMARY_REVISION_SELECT = {
+  id: true,
+  revision_number: true,
+  title: true,
+  summary: true,
+  status: true,
+  published_at: true,
+  category: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  },
+} as const;
+
+const RESOURCE_SUMMARY_SELECT = {
+  id: true,
+  created_at: true,
+  updated_at: true,
+  archived_at: true,
+  revisions: {
+    take: 1,
+    orderBy: {
+      revision_number: "desc",
+    },
+    select: RESOURCE_SUMMARY_REVISION_SELECT,
+  },
+} as const;
+
+const PUBLISHED_RESOURCE_SUMMARY_SELECT = {
+  ...RESOURCE_SUMMARY_SELECT,
+  revisions: {
+    where: {
+      status: "PUBLISHED",
+    },
+    ...RESOURCE_SUMMARY_SELECT.revisions,
+  },
+} as const;
+
+const RESOURCE_DETAIL_REVISION_SELECT = {
+  id: true,
+  revision_number: true,
+  category_id: true,
+  title: true,
+  summary: true,
+  body_markdown: true,
+  external_url: true,
+  status: true,
+  submitted_at: true,
+  published_at: true,
+  created_at: true,
+  updated_at: true,
+  category: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  },
+} as const;
+
+export async function listPublishedResources(
+  input: ResourcePaginationInput,
+  dependencies: ResourceServiceDependencies,
+) {
+  const where = {
+    archived_at: null,
+    revisions: {
+      some: {
+        status: "PUBLISHED" as const,
+      },
+    },
+  };
+
+  const [total, resources] = await Promise.all([
+    dependencies.prisma.resource.count({
+      where,
+    }),
+    dependencies.prisma.resource.findMany({
+      where,
+      orderBy: [
+        {
+          created_at: "desc",
+        },
+        {
+          id: "desc",
+        },
+      ],
+      skip: input.offset,
+      take: input.limit,
+      select: PUBLISHED_RESOURCE_SUMMARY_SELECT,
+    }),
+  ]);
+
+  return {
+    resources,
+    total,
+  };
+}
+
+export async function listOwnResources(
+  userId: string,
+  input: ResourcePaginationInput,
+  dependencies: ResourceServiceDependencies,
+) {
+  const where = {
+    created_by: userId,
+  };
+
+  const [total, resources] = await Promise.all([
+    dependencies.prisma.resource.count({
+      where,
+    }),
+    dependencies.prisma.resource.findMany({
+      where,
+      orderBy: [
+        {
+          created_at: "desc",
+        },
+        {
+          id: "desc",
+        },
+      ],
+      skip: input.offset,
+      take: input.limit,
+      select: RESOURCE_SUMMARY_SELECT,
+    }),
+  ]);
+
+  return {
+    resources,
+    total,
+  };
+}
+
+export async function listAllResources(
+  input: ResourcePaginationInput,
+  dependencies: ResourceServiceDependencies,
+) {
+  const [total, resources] = await Promise.all([
+    dependencies.prisma.resource.count(),
+    dependencies.prisma.resource.findMany({
+      orderBy: [
+        {
+          created_at: "desc",
+        },
+        {
+          id: "desc",
+        },
+      ],
+      skip: input.offset,
+      take: input.limit,
+      select: RESOURCE_SUMMARY_SELECT,
+    }),
+  ]);
+
+  return {
+    resources,
+    total,
+  };
+}
+
+export async function getResourceById(
+  resourceId: string,
+  context: ResourceReadContext,
+  dependencies: ResourceServiceDependencies,
+) {
+  const resource = await dependencies.prisma.resource.findUnique({
+    where: {
+      id: resourceId,
+    },
+    select: {
+      id: true,
+      created_by: true,
+      created_at: true,
+      updated_at: true,
+      archived_at: true,
+      revisions: {
+        orderBy: {
+          revision_number: "desc",
+        },
+        select: RESOURCE_DETAIL_REVISION_SELECT,
+      },
+    },
+  });
+
+  if (!resource) {
+    throw new ResourceNotFoundError();
+  }
+
+  const canReadUnpublished =
+    context.canReadAll || (context.canReadOwn && context.userId === resource.created_by);
+
+  if (resource.archived_at !== null && !canReadUnpublished) {
+    throw new ResourceNotFoundError();
+  }
+
+  const visibleRevisions = canReadUnpublished
+    ? resource.revisions
+    : resource.revisions.filter((revision) => revision.status === "PUBLISHED");
+
+  if (visibleRevisions.length === 0) {
+    throw new ResourceNotFoundError();
+  }
+
+  return {
+    ...resource,
+    revisions: visibleRevisions,
+  };
 }

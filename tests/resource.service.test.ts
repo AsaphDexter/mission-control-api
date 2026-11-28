@@ -3,10 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   InvalidResourceInputError,
   ResourceCategoryUnavailableError,
+  ResourceNotFoundError,
 } from "../src/modules/resources/resource.errors.js";
 
 import {
   createResource,
+  getResourceById,
+  listAllResources,
+  listOwnResources,
+  listPublishedResources,
   type ResourceServiceDependencies,
 } from "../src/modules/resources/resource.service.js";
 
@@ -48,6 +53,26 @@ const REVISION = {
   category: CATEGORY,
 };
 
+const PUBLISHED_REVISION = {
+  ...REVISION,
+  id: "7e1c9c0a-3d24-4a77-a1b3-123456789abc",
+  status: "PUBLISHED",
+  published_at: CREATED_AT,
+};
+
+const DRAFT_REVISION = {
+  ...REVISION,
+  id: "9e1c9c0a-3d24-4a77-a1b3-123456789abc",
+  revision_number: 2,
+  title: "Advanced API Testing",
+  status: "DRAFT",
+};
+
+const RESOURCE_WITH_REVISIONS = {
+  ...RESOURCE,
+  revisions: [DRAFT_REVISION, PUBLISHED_REVISION],
+};
+
 const INPUT = {
   categoryId: CATEGORY_ID,
   title: "Introduction to API Testing",
@@ -62,6 +87,10 @@ const CONTEXT = {
 };
 
 function createMockDependencies() {
+  const findResourceCount = vi.fn().mockResolvedValue(0);
+  const findResources = vi.fn().mockResolvedValue([]);
+  const findResourceById = vi.fn().mockResolvedValue(null);
+
   const findActiveCategory = vi.fn().mockResolvedValue(CATEGORY);
   const createResourceRecord = vi.fn().mockResolvedValue(RESOURCE);
   const createRevisionRecord = vi.fn().mockResolvedValue(REVISION);
@@ -89,6 +118,11 @@ function createMockDependencies() {
 
   const dependencies = {
     prisma: {
+      resource: {
+        count: findResourceCount,
+        findMany: findResources,
+        findUnique: findResourceById,
+      },
       $transaction: runTransaction,
     },
   } as unknown as ResourceServiceDependencies;
@@ -96,6 +130,9 @@ function createMockDependencies() {
   return {
     dependencies,
     mocks: {
+      findResourceCount,
+      findResources,
+      findResourceById,
       findActiveCategory,
       createResourceRecord,
       createRevisionRecord,
@@ -370,5 +407,253 @@ describe("Resource creation service", () => {
     await expect(createResource(INPUT, CONTEXT, dependencies)).rejects.toThrow(
       "Audit insert failed",
     );
+  });
+});
+
+describe("Resource retrieval service", () => {
+  it("lists only active resources with published revisions", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceCount.mockResolvedValue(1);
+    mocks.findResources.mockResolvedValue([
+      {
+        ...RESOURCE,
+        revisions: [PUBLISHED_REVISION],
+      },
+    ]);
+
+    const result = await listPublishedResources({ limit: 10, offset: 5 }, dependencies);
+
+    expect(result.total).toBe(1);
+    expect(result.resources).toHaveLength(1);
+
+    expect(mocks.findResourceCount).toHaveBeenCalledWith({
+      where: {
+        archived_at: null,
+        revisions: {
+          some: {
+            status: "PUBLISHED",
+          },
+        },
+      },
+    });
+
+    expect(mocks.findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          archived_at: null,
+          revisions: {
+            some: {
+              status: "PUBLISHED",
+            },
+          },
+        },
+        orderBy: [
+          {
+            created_at: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+        skip: 5,
+        take: 10,
+      }),
+    );
+  });
+
+  it("lists only resources created by the requested owner", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceCount.mockResolvedValue(1);
+    mocks.findResources.mockResolvedValue([RESOURCE_WITH_REVISIONS]);
+
+    const result = await listOwnResources(USER_ID, { limit: 15, offset: 2 }, dependencies);
+
+    expect(result.total).toBe(1);
+    expect(result.resources).toHaveLength(1);
+
+    expect(mocks.findResourceCount).toHaveBeenCalledWith({
+      where: {
+        created_by: USER_ID,
+      },
+    });
+
+    expect(mocks.findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          created_by: USER_ID,
+        },
+        orderBy: [
+          {
+            created_at: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+        skip: 2,
+        take: 15,
+      }),
+    );
+  });
+
+  it("lists all resources without restricting ownership or archive status", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceCount.mockResolvedValue(2);
+    mocks.findResources.mockResolvedValue([
+      RESOURCE_WITH_REVISIONS,
+      {
+        ...RESOURCE,
+        id: "ae1c9c0a-3d24-4a77-a1b3-123456789abc",
+        archived_at: CREATED_AT,
+        created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+        revisions: [PUBLISHED_REVISION],
+      },
+    ]);
+
+    const result = await listAllResources({ limit: 20, offset: 0 }, dependencies);
+
+    expect(result.total).toBe(2);
+    expect(result.resources).toHaveLength(2);
+
+    expect(mocks.findResourceCount).toHaveBeenCalledOnce();
+    expect(mocks.findResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [
+          {
+            created_at: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+        skip: 0,
+        take: 20,
+      }),
+    );
+
+    expect(mocks.findResources.mock.calls[0]?.[0]).not.toHaveProperty("where");
+  });
+
+  it("returns only published revisions to published-only readers", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue(RESOURCE_WITH_REVISIONS);
+
+    const result = await getResourceById(
+      RESOURCE_ID,
+      {
+        userId: USER_ID,
+        canReadOwn: false,
+        canReadAll: false,
+      },
+      dependencies,
+    );
+
+    expect(result.revisions).toEqual([PUBLISHED_REVISION]);
+    expect(result.revisions.every((revision) => revision.status === "PUBLISHED")).toBe(true);
+  });
+
+  it("returns all revisions to the resource owner with read.own permission", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue(RESOURCE_WITH_REVISIONS);
+
+    const result = await getResourceById(
+      RESOURCE_ID,
+      {
+        userId: USER_ID,
+        canReadOwn: true,
+        canReadAll: false,
+      },
+      dependencies,
+    );
+
+    expect(result.revisions).toEqual([DRAFT_REVISION, PUBLISHED_REVISION]);
+  });
+
+  it("does not expose another owner's drafts to a user with read.own permission", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue({
+      ...RESOURCE_WITH_REVISIONS,
+      created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+    });
+
+    const result = await getResourceById(
+      RESOURCE_ID,
+      {
+        userId: USER_ID,
+        canReadOwn: true,
+        canReadAll: false,
+      },
+      dependencies,
+    );
+
+    expect(result.revisions).toEqual([PUBLISHED_REVISION]);
+  });
+
+  it("hides archived resources from published-only readers", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue({
+      ...RESOURCE_WITH_REVISIONS,
+      archived_at: CREATED_AT,
+    });
+
+    await expect(
+      getResourceById(
+        RESOURCE_ID,
+        {
+          userId: USER_ID,
+          canReadOwn: false,
+          canReadAll: false,
+        },
+        dependencies,
+      ),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+  });
+
+  it("allows administrators to retrieve archived resources and all revisions", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue({
+      ...RESOURCE_WITH_REVISIONS,
+      created_by: "be1c9c0a-3d24-4a77-a1b3-123456789abc",
+      archived_at: CREATED_AT,
+    });
+
+    const result = await getResourceById(
+      RESOURCE_ID,
+      {
+        userId: USER_ID,
+        canReadOwn: false,
+        canReadAll: true,
+      },
+      dependencies,
+    );
+
+    expect(result.archived_at).toEqual(CREATED_AT);
+    expect(result.revisions).toEqual([DRAFT_REVISION, PUBLISHED_REVISION]);
+  });
+
+  it("throws ResourceNotFoundError when the resource does not exist", async () => {
+    const { dependencies, mocks } = createMockDependencies();
+
+    mocks.findResourceById.mockResolvedValue(null);
+
+    await expect(
+      getResourceById(
+        RESOURCE_ID,
+        {
+          userId: USER_ID,
+          canReadOwn: false,
+          canReadAll: false,
+        },
+        dependencies,
+      ),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 });
